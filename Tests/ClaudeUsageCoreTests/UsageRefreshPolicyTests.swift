@@ -78,6 +78,7 @@ import Testing
         policy.record(success: snapshot(percent: 37, at: 100))
 
         policy.record(failure: .noToken)
+        policy.record(failure: .noToken)
 
         #expect(policy.state == .noToken)
     }
@@ -87,7 +88,83 @@ import Testing
         policy.record(success: snapshot(percent: 37, at: 100))
 
         policy.record(failure: .unauthorized)
+        policy.record(failure: .unauthorized)
 
+        #expect(policy.state == .unauthorized)
+    }
+
+    // MARK: - Token rotation
+    //
+    // Claude Code rotates the OAuth token roughly every 8 hours, rewriting the
+    // Keychain item. A poll landing in that window sends the superseded token
+    // and gets a 401 — but the app is not signed out, and the very next poll
+    // reads the new token and succeeds. A single auth failure is therefore
+    // transient and must not blank a good value.
+
+    @Test func keepsTheValueThroughASingleUnauthorized() {
+        var policy = UsageRefreshPolicy()
+        let fetched = snapshot(percent: 37, at: 100)
+        policy.record(success: fetched)
+
+        policy.record(failure: .unauthorized)
+
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+    }
+
+    @Test func keepsTheValueThroughASingleNoToken() {
+        var policy = UsageRefreshPolicy()
+        let fetched = snapshot(percent: 37, at: 100)
+        policy.record(success: fetched)
+
+        policy.record(failure: .noToken)
+
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+    }
+
+    @Test func doesNotBackOffOnAnUnconfirmedAuthFailure() {
+        var policy = UsageRefreshPolicy()
+        policy.record(success: snapshot(percent: 37, at: 100))
+
+        policy.record(failure: .unauthorized)
+
+        // The next poll is the one that reads the rotated token — it must not
+        // be deferred by a doubled interval.
+        #expect(policy.interval == 60)
+    }
+
+    @Test func recoversFromARotationWindowWithoutEverBlanking() {
+        var policy = UsageRefreshPolicy()
+        let fetched = snapshot(percent: 37, at: 100)
+        policy.record(success: fetched)
+
+        policy.record(failure: .unauthorized)
+        #expect(policy.state.displayPercent == 37)
+
+        let fresh = snapshot(percent: 41, at: 200)
+        policy.record(success: fresh)
+
+        #expect(policy.state == .loaded(fresh))
+    }
+
+    @Test func requiresAuthFailuresToBeConsecutive() {
+        var policy = UsageRefreshPolicy()
+        policy.record(success: snapshot(percent: 37, at: 100))
+
+        policy.record(failure: .unauthorized)
+        policy.record(success: snapshot(percent: 41, at: 200))
+        policy.record(failure: .unauthorized)
+
+        // The success in between clears the count, so this is a first failure
+        // again — the value survives.
+        #expect(policy.state.displayPercent == 41)
+    }
+
+    @Test func reportsAuthFailureWithNoPriorValueImmediately() {
+        var policy = UsageRefreshPolicy()
+
+        policy.record(failure: .unauthorized)
+
+        // Nothing to protect, so there is no reason to wait for confirmation.
         #expect(policy.state == .unauthorized)
     }
 
@@ -119,6 +196,7 @@ import Testing
         policy.record(success: fetched)
 
         policy.record(failure: .noToken)
+        policy.record(failure: .noToken)
         policy.record(failure: .transport)
 
         #expect(policy.state == .unreachable)
@@ -129,6 +207,7 @@ import Testing
         let fetched = snapshot(percent: 37, at: 100)
         policy.record(success: fetched)
 
+        policy.record(failure: .unauthorized)
         policy.record(failure: .unauthorized)
         policy.record(failure: .transport)
 
