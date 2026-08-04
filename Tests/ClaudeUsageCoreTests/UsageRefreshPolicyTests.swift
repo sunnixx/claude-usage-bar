@@ -112,4 +112,38 @@ import Testing
         #expect(policy.state == .loaded(fresh))
         #expect(policy.interval == 60)
     }
+
+    @Test func dropsValuePermanentlyOnNoToken() {
+        var policy = UsageRefreshPolicy()
+        let fetched = snapshot(percent: 37, at: 100)
+        policy.record(success: fetched)
+
+        policy.record(failure: .noToken)
+        policy.record(failure: .transport)
+
+        #expect(policy.state == .unreachable)
+    }
+
+    @Test func dropsValuePermanentlyOnUnauthorized() {
+        var policy = UsageRefreshPolicy()
+        let fetched = snapshot(percent: 37, at: 100)
+        policy.record(success: fetched)
+
+        policy.record(failure: .unauthorized)
+        policy.record(failure: .transport)
+
+        #expect(policy.state == .unreachable)
+    }
+
+    @Test func recoversFromNoTokenWithFreshFetch() {
+        var policy = UsageRefreshPolicy()
+        policy.record(success: snapshot(percent: 37, at: 100))
+        policy.record(failure: .noToken)
+
+        let fresh = snapshot(percent: 42, at: 300)
+        policy.record(success: fresh)
+
+        #expect(policy.state == .loaded(fresh))
+        #expect(policy.interval == 60)
+    }
 }

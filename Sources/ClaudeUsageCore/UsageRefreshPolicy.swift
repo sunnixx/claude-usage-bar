@@ -45,9 +45,12 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
 
         switch failure {
         case .noToken:
-            // Signing out invalidates the number entirely — don't keep showing it.
+            // Signing out invalidates the number entirely — drop it and prevent resurrection.
+            lastSnapshot = nil
             state = .noToken
         case .unauthorized:
+            // Expired token invalidates the number entirely — drop it and prevent resurrection.
+            lastSnapshot = nil
             state = .unauthorized
         case .transport, .badStatus, .decoding:
             if let lastSnapshot {
