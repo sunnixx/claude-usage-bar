@@ -51,7 +51,7 @@ import Testing
         #expect(MenuModel.statusTitle(for: .loaded(snapshot)).isCritical == true)
     }
 
-    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable])
+    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .keychainDenied])
     func showsADashWhenThereIsNoValue(state: UsageState) {
         let title = MenuModel.statusTitle(for: state)
 
@@ -66,6 +66,20 @@ import Testing
         #expect(title.text == "37%")
     }
 
+    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .keychainDenied])
+    func isStaleIsFalseForNonStaleStates(state: UsageState) {
+        #expect(MenuModel.statusTitle(for: state).isStale == false)
+    }
+
+    @Test func isStaleIsFalseWhenLoaded() throws {
+        #expect(MenuModel.statusTitle(for: .loaded(try loadedSnapshot())).isStale == false)
+    }
+
+    @Test func isStaleIsTrueWhenStale() throws {
+        let snapshot = try loadedSnapshot()
+        #expect(MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt)).isStale == true)
+    }
+
     // MARK: rows
 
     @Test func listsBothWindowsAndEachScope() throws {
@@ -75,7 +89,7 @@ import Testing
         #expect(text.count == 4)
         #expect(text[0] == "Session (5h)   37%  ▓▓▓▓░░░░░░  resets in 1h 12m")
         #expect(text[1] == "This week      26%  ▓▓▓░░░░░░░  resets Sat, Aug 8")
-        #expect(text[2] == "Fable          10%  ▓░░░░░░░░░")
+        #expect(text[2] == "└ Fable        10%  ▓░░░░░░░░░")
         #expect(text[3] == "Updated 07:48")
     }
 
@@ -120,5 +134,6 @@ import Testing
         #expect(rows(.noToken, now: now) == ["Not signed in to Claude Code"])
         #expect(rows(.unauthorized, now: now) == ["Token expired — open Claude Code to refresh"])
         #expect(rows(.unreachable, now: now) == ["Can't reach Anthropic"])
+        #expect(rows(.keychainDenied, now: now) == ["Keychain access denied — allow in Keychain Access"])
     }
 }

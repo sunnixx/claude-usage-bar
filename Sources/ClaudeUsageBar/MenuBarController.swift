@@ -8,6 +8,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var state: UsageState = .loading
+    /// Cached so `renderMenu()` — called on every state change, up to once a
+    /// minute even with the menu closed — doesn't query SMAppService each time.
+    /// Refreshed in `menuWillOpen` and right after the user toggles it.
+    private var loginItemEnabled = LoginItem.isEnabled
 
     override init() {
         super.init()
@@ -48,11 +52,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         guard let button = statusItem.button else { return }
 
         let title = MenuModel.statusTitle(for: state)
+        let color: NSColor
+        if title.isCritical {
+            // A near-limit warning must not be softened, even while stale.
+            color = .systemRed
+        } else if title.isStale {
+            color = .secondaryLabelColor
+        } else {
+            color = .labelColor
+        }
         button.attributedTitle = NSAttributedString(
             string: " \(title.text)",
             attributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular),
-                .foregroundColor: title.isCritical ? NSColor.systemRed : NSColor.labelColor,
+                .foregroundColor: color,
             ]
         )
     }
@@ -72,7 +85,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         ) {
             let item = NSMenuItem(title: row.text, action: nil, keyEquivalent: "")
             item.attributedTitle = NSAttributedString(
-                string: row.isIndented ? "   └ \(row.text)" : row.text,
+                string: row.text,
                 attributes: [.font: font]
             )
             item.isEnabled = false
@@ -95,7 +108,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             keyEquivalent: ""
         )
         launch.target = self
-        launch.state = LoginItem.isEnabled ? .on : .off
+        launch.state = loginItemEnabled ? .on : .off
         menu.addItem(launch)
 
         menu.addItem(.separator())
@@ -115,7 +128,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleLaunchAtLogin() {
-        LoginItem.setEnabled(!LoginItem.isEnabled)
+        LoginItem.setEnabled(!loginItemEnabled)
+        loginItemEnabled = LoginItem.isEnabled
         renderMenu()
     }
 
@@ -124,6 +138,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         // Rebuild first so relative reset times ("in 1h 12m") are current,
         // then ask for fresh data.
+        loginItemEnabled = LoginItem.isEnabled
         renderMenu()
         onRefreshRequested?()
     }

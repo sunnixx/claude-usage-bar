@@ -3,6 +3,7 @@ import Foundation
 public struct StatusTitle: Equatable, Sendable {
     public let text: String
     public let isCritical: Bool
+    public let isStale: Bool
 }
 
 public struct MenuRow: Equatable, Sendable {
@@ -22,9 +23,16 @@ public enum MenuModel {
 
     public static func statusTitle(for state: UsageState) -> StatusTitle {
         let percent = state.displayPercent
+        let isStale: Bool
+        if case .stale = state {
+            isStale = true
+        } else {
+            isStale = false
+        }
         return StatusTitle(
             text: Formatting.percentText(percent),
-            isCritical: Formatting.isCritical(percent)
+            isCritical: Formatting.isCritical(percent),
+            isStale: isStale
         )
     }
 
@@ -44,6 +52,8 @@ public enum MenuModel {
             return [MenuRow(text: "Token expired — open Claude Code to refresh")]
         case .unreachable:
             return [MenuRow(text: "Can't reach Anthropic")]
+        case .keychainDenied:
+            return [MenuRow(text: "Keychain access denied — allow in Keychain Access")]
         case .loaded(let snapshot):
             return usageRows(snapshot, now: now, calendar: calendar, locale: locale)
                 + [MenuRow(text: "Updated \(Formatting.clockTime(snapshot.fetchedAt, locale: locale, timeZone: timeZone))")]
@@ -76,7 +86,8 @@ public enum MenuModel {
                 text: line(
                     label: scope.label,
                     window: UsageWindow(percent: scope.percent, resetsAt: scope.resetsAt),
-                    now: now, calendar: calendar, locale: locale
+                    now: now, calendar: calendar, locale: locale,
+                    indented: true
                 ),
                 isIndented: true
             ))
@@ -90,9 +101,13 @@ public enum MenuModel {
         window: UsageWindow,
         now: Date,
         calendar: Calendar,
-        locale: Locale
+        locale: Locale,
+        indented: Bool = false
     ) -> String {
-        let paddedLabel = label.padding(toLength: max(labelWidth, label.count), withPad: " ", startingAt: 0)
+        let displayLabel = indented ? "└ \(label)" : label
+        let paddedLabel = displayLabel.padding(
+            toLength: max(labelWidth, displayLabel.count), withPad: " ", startingAt: 0
+        )
         let percent = String(
             repeating: " ",
             count: max(0, percentWidth - Formatting.percentText(window.percent).count)
