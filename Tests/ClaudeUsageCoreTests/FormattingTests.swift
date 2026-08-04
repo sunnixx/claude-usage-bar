@@ -51,6 +51,11 @@ import Testing
         #expect(Formatting.progressBar(percent: 140, width: 10) == "▓▓▓▓▓▓▓▓▓▓")
     }
 
+    @Test func clampsANegativeWidthToZeroInsteadOfTrapping() {
+        #expect(Formatting.progressBar(percent: 50, width: -3) == "")
+        #expect(Formatting.progressBar(percent: 50, width: 0) == "")
+    }
+
     // MARK: resetDescription
 
     @Test func describesNearResetsRelatively() throws {

@@ -14,8 +14,9 @@ public enum Formatting {
     }
 
     public static func progressBar(percent: Int, width: Int = 10) -> String {
+        let width = max(width, 0)
         let clamped = min(max(percent, 0), 100)
-        let filled = Int((Double(clamped) / 100.0 * Double(width)).rounded())
+        let filled = min(width, Int((Double(clamped) / 100.0 * Double(width)).rounded()))
         return String(repeating: "▓", count: filled)
             + String(repeating: "░", count: width - filled)
     }

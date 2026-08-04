@@ -29,7 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Fires an out-of-band refresh without disturbing the polling loop.
+    /// Called from "Refresh Now" and menu-open — resets any backoff so a
+    /// user-initiated retry isn't stuck on a backed-off interval.
     private func refreshNow() {
+        policy.forceRefreshRequested()
         Task { [weak self] in
             await self?.refresh()
         }
