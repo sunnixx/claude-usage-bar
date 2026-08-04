@@ -1,0 +1,8 @@
+{
+  "five_hour": null,
+  "seven_day": null,
+  "limits": [
+    { "kind": "session", "group": "session", "percent": 4, "severity": "normal", "resets_at": null, "scope": null, "is_active": true },
+    { "kind": "weekly_all", "group": "weekly", "percent": 0, "severity": "normal", "resets_at": null, "scope": null, "is_active": false }
+  ]
+}
