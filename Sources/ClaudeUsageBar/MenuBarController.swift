@@ -30,6 +30,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     func update(state: UsageState) {
+        // Skip the rebuild when nothing changed, so a poll landing while the
+        // menu is open doesn't flicker or reset the current highlight.
+        guard state != self.state else { return }
         self.state = state
         render()
     }

@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let client = UsageClient(tokens: KeychainTokenStore())
 
     private var pollTask: Task<Void, Never>?
-    private var refreshTask: Task<Void, Never>?
+    private var isFetching = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let controller = MenuBarController()
@@ -26,19 +26,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         pollTask?.cancel()
-        refreshTask?.cancel()
     }
 
     /// Fires an out-of-band refresh without disturbing the polling loop.
     private func refreshNow() {
-        guard refreshTask == nil else { return }
-        refreshTask = Task { [weak self] in
+        Task { [weak self] in
             await self?.refresh()
-            self?.refreshTask = nil
         }
     }
 
+    /// Single guarded entry point: at most one fetch is ever in flight,
+    /// whether it was triggered by the poll loop, "Refresh Now", or
+    /// opening the menu. If one is already running, this call is a no-op.
     private func refresh() async {
+        guard !isFetching else { return }
+        isFetching = true
+        defer { isFetching = false }
+
         do {
             policy.record(success: try await client.fetchUsage())
         } catch let error as UsageError {
