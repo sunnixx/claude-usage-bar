@@ -7,13 +7,16 @@ public enum UsageState: Equatable, Sendable {
     case noToken
     case unauthorized
     case unreachable
+    /// Keychain lookup failed (denied prompt, locked keychain, corrupt item)
+    /// and there is no prior good value to fall back on.
+    case keychainDenied
 
     /// The percentage shown in the menu bar, if there is one.
     public var displayPercent: Int? {
         switch self {
         case .loaded(let snapshot), .stale(let snapshot, _):
             return snapshot.session?.percent
-        case .loading, .noToken, .unauthorized, .unreachable:
+        case .loading, .noToken, .unauthorized, .unreachable, .keychainDenied:
             return nil
         }
     }
@@ -58,6 +61,22 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
             } else {
                 state = .unreachable
             }
+        case .keychainUnavailable:
+            // A denied prompt or locked keychain is transient — never treat it
+            // like a sign-out. Retain the last good value if there is one.
+            if let lastSnapshot {
+                state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt)
+            } else {
+                state = .keychainDenied
+            }
         }
+    }
+
+    /// Resets the backoff to the base interval without touching `state`.
+    /// Call this from user-initiated refresh paths (Refresh Now, menu-open)
+    /// so a manual retry doesn't inherit a backed-off interval. Never call
+    /// this from the poll loop itself.
+    public mutating func forceRefreshRequested() {
+        interval = Self.baseInterval
     }
 }

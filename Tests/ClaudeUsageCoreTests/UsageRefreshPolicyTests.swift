@@ -135,6 +135,36 @@ import Testing
         #expect(policy.state == .unreachable)
     }
 
+    @Test func retainsTheLastValueOnKeychainUnavailable() {
+        var policy = UsageRefreshPolicy()
+        let fetched = snapshot(percent: 37, at: 100)
+        policy.record(success: fetched)
+
+        policy.record(failure: .keychainUnavailable)
+
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+    }
+
+    @Test func reportsKeychainDeniedWhenNothingHasEverSucceeded() {
+        var policy = UsageRefreshPolicy()
+
+        policy.record(failure: .keychainUnavailable)
+
+        #expect(policy.state == .keychainDenied)
+    }
+
+    @Test func forceRefreshResetsTheIntervalWithoutTouchingState() {
+        var policy = UsageRefreshPolicy()
+        policy.record(failure: .transport)
+        policy.record(failure: .transport)
+        #expect(policy.interval == 240)
+
+        policy.forceRefreshRequested()
+
+        #expect(policy.interval == 60)
+        #expect(policy.state == .unreachable)
+    }
+
     @Test func recoversFromNoTokenWithFreshFetch() {
         var policy = UsageRefreshPolicy()
         policy.record(success: snapshot(percent: 37, at: 100))

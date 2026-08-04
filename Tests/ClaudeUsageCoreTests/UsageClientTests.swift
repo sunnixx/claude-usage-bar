@@ -69,8 +69,8 @@ private func respond(_ status: Int, _ body: Data) -> UsageClient.Transport {
         }
     }
 
-    @Test func treatsAKeychainFailureAsNoToken() async throws {
-        await #expect(throws: UsageError.noToken) {
+    @Test func treatsAThrownKeychainErrorAsUnavailableNotNoToken() async throws {
+        await #expect(throws: UsageError.keychainUnavailable) {
             try await client(tokens: StubTokens.broken, transport: respond(200, Data())).fetchUsage()
         }
     }

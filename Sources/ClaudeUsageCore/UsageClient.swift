@@ -6,6 +6,10 @@ public enum UsageError: Error, Equatable {
     case transport
     case badStatus(Int)
     case decoding
+    /// Keychain lookup threw (denied prompt, locked keychain, corrupt item) —
+    /// distinct from `.noToken`, which means the lookup succeeded and found
+    /// nothing. Treated as transient so a good value is never blanked.
+    case keychainUnavailable
 }
 
 public protocol UsageFetching: Sendable {
@@ -39,7 +43,14 @@ public struct UsageClient: UsageFetching {
     }
 
     public func fetchUsage() async throws -> UsageSnapshot {
-        guard case .token(let token) = ((try? tokens.accessToken()) ?? .missing) else {
+        let lookup: TokenLookup
+        do {
+            lookup = try tokens.accessToken()
+        } catch {
+            throw UsageError.keychainUnavailable
+        }
+
+        guard case .token(let token) = lookup else {
             throw UsageError.noToken
         }
 
