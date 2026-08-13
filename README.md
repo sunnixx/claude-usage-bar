@@ -4,6 +4,8 @@ A macOS menu bar readout of your Claude subscription usage — the 5-hour
 session window at a glance, with the weekly window and per-model scopes in the
 dropdown.
 
+![ClaudeUsageBar in the macOS menu bar, showing 7% of the session window used and the dropdown with the weekly window and per-model scopes](docs/images/screenshot.png)
+
 It reads the OAuth token Claude Code already stores in your login Keychain and
 polls `https://api.anthropic.com/api/oauth/usage` once a minute. It never
 writes or refreshes that token: Claude Code owns it. When the token expires,
