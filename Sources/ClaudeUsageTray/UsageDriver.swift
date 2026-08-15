@@ -40,7 +40,10 @@ public final class UsageDriver: @unchecked Sendable {
     /// keeps returning ~0, and the poll loop spins continuously until the
     /// in-flight fetch finishes. A few seconds is long enough to stop the
     /// spin but short enough that the provider is re-attempted promptly once
-    /// the in-flight fetch clears.
+    /// the in-flight fetch clears. Must stay strictly greater than
+    /// `minimumWakeInterval` — nothing enforces that ordering, but if it ever
+    /// stopped holding, the skip-path test that distinguishes this bump from
+    /// the floor alone would silently pass for the wrong reason again.
     /// Internal rather than private so `DueGatingTests` can assert the
     /// skip-path bump lands strictly above the `minimumWakeInterval` floor —
     /// distinguishing "the bump happened" from "the floor alone happened to
@@ -237,7 +240,11 @@ public final class UsageDriver: @unchecked Sendable {
 
         let shouldFetch = withLock {
             if fetching.contains(provider) {
-                nextDue[provider] = now().addingTimeInterval(Self.inFlightRetryInterval)
+                let retryAt = now().addingTimeInterval(Self.inFlightRetryInterval)
+                // Only ever push the due time out. A provider on a long
+                // backoff must not have it shortened just because a
+                // concurrent fetch was skipped.
+                nextDue[provider] = max(nextDue[provider] ?? retryAt, retryAt)
                 return false
             }
             fetching.insert(provider)

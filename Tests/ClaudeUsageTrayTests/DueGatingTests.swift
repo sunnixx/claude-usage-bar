@@ -97,6 +97,34 @@ private actor GatedSucceedingClient: UsageFetching {
     }
 }
 
+/// Gated like `GatedSucceedingClient`, but the caller chooses success or
+/// failure per call — needed to first back a provider off with real failures
+/// and then, separately, hold a later call in flight.
+private actor ControllableClient: UsageFetching {
+    private(set) var callCount = 0
+    private var pendingFetch: CheckedContinuation<ProviderSnapshot, Error>?
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func fetchUsage() async throws -> ProviderSnapshot {
+        callCount += 1
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingFetch = continuation
+            waiter?.resume()
+            waiter = nil
+        }
+    }
+
+    func waitUntilGated() async {
+        if pendingFetch != nil { return }
+        await withCheckedContinuation { continuation in waiter = continuation }
+    }
+
+    func release(with result: Result<ProviderSnapshot, Error>) {
+        pendingFetch?.resume(with: result)
+        pendingFetch = nil
+    }
+}
+
 // MARK: - Tests
 
 @Suite struct DueGatingTests {
@@ -237,5 +265,52 @@ private actor GatedSucceedingClient: UsageFetching {
         // still must never surface as a zero sleep.
         clock.advance(by: 10_000)
         #expect(driver.timeUntilNextWake() > 0)
+    }
+
+    /// The skip-path bump must only ever push `nextDue` later, never pull it
+    /// earlier. A provider already on a long backoff, then skipped because a
+    /// concurrent fetch for it is in flight, must keep its long due time —
+    /// not have it shortened to the short in-flight retry delay.
+    @Test func skipPathNeverPullsALongBackoffEarlier() async {
+        let clock = MutableClock(Date(timeIntervalSince1970: 0))
+        let codexClient = ControllableClient()
+        let driver = UsageDriver(
+            tray: RecordingTray(),
+            clients: [(.codex, codexClient)],
+            loginItem: StubLogin(),
+            now: { clock.now }
+        )
+
+        // Two consecutive transport failures back Codex off from the 60s
+        // base to 240s (60 -> 120 -> 240), setting nextDue = t=0 + 240 = 240.
+        for _ in 0..<2 {
+            async let attempt: Void = driver.refresh(.codex)
+            await codexClient.waitUntilGated()
+            await codexClient.release(with: .failure(UsageError.transport))
+            await attempt
+        }
+        #expect(driver.intervalForTesting(.codex) == 240)
+        #expect(driver.timeUntilNextWake() == 240)
+
+        // A third fetch starts and is left in flight...
+        async let inFlight: Void = driver.refresh(.codex)
+        await codexClient.waitUntilGated()
+        #expect(await codexClient.callCount == 3)
+
+        // ...and a concurrent call for the same provider arrives while it's
+        // still running (e.g. refreshNow() from a menu-open racing the poll
+        // loop). This must hit the skip branch, not start a fourth fetch.
+        await driver.refresh(.codex)
+        #expect(await codexClient.callCount == 3, "the skip must not start a new fetch")
+
+        // The point of this test: nextDue must still reflect the 240s
+        // backoff, not have been pulled in to the 5s in-flight retry delay.
+        // Reverting the skip branch's `max(nextDue[provider] ?? retryAt,
+        // retryAt)` to an unconditional `nextDue[provider] = retryAt` makes
+        // this fail: timeUntilNextWake() would report ~5, not 240.
+        #expect(driver.timeUntilNextWake() == 240)
+
+        await codexClient.release(with: .failure(UsageError.transport))
+        await inFlight
     }
 }
