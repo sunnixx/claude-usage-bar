@@ -1,0 +1,19 @@
+{
+  "plan_type": "pro",
+  "rate_limit": {
+    "primary_window": {
+      "used_percent": 10,
+      "limit_window_seconds": 18000,
+      "reset_at": 1789416863
+    },
+    "secondary_window": null
+  },
+  "additional_rate_limits": [
+    {
+      "limit_id": "code_review",
+      "used_percent": 25,
+      "limit_window_seconds": 604800,
+      "reset_at": 1789600000
+    }
+  ]
+}
