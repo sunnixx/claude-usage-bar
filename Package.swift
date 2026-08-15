@@ -8,6 +8,7 @@ import PackageDescription
 var targets: [Target] = [
     .target(name: "ClaudeUsageCore"),
     .target(name: "ClaudeUsageTokens", dependencies: ["ClaudeUsageCore"]),
+    .target(name: "ClaudeUsageTray", dependencies: ["ClaudeUsageCore"]),
     .testTarget(
         name: "ClaudeUsageCoreTests",
         dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens"],
@@ -19,7 +20,7 @@ var targets: [Target] = [
 targets.append(
     .executableTarget(
         name: "ClaudeUsageBar",
-        dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens"]
+        dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens", "ClaudeUsageTray"]
     )
 )
 #endif
