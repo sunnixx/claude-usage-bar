@@ -9,14 +9,14 @@ public enum UsageState: Equatable, Sendable {
     case unreachable
     /// Keychain lookup failed (denied prompt, locked keychain, corrupt item)
     /// and there is no prior good value to fall back on.
-    case keychainDenied
+    case tokenStoreUnavailable
 
     /// The percentage shown in the menu bar, if there is one.
     public var displayPercent: Int? {
         switch self {
         case .loaded(let snapshot), .stale(let snapshot, _):
             return snapshot.session?.percent
-        case .loading, .noToken, .unauthorized, .unreachable, .keychainDenied:
+        case .loading, .noToken, .unauthorized, .unreachable, .tokenStoreUnavailable:
             return nil
         }
     }
@@ -57,7 +57,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
         switch failure {
         case .noToken, .unauthorized:
             consecutiveAuthFailures += 1
-        case .transport, .badStatus, .decoding, .keychainUnavailable:
+        case .transport, .badStatus, .decoding, .tokenStoreUnavailable:
             consecutiveAuthFailures = 0
         }
 
@@ -91,13 +91,13 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
             } else {
                 state = .unreachable
             }
-        case .keychainUnavailable:
+        case .tokenStoreUnavailable:
             // A denied prompt or locked keychain is transient — never treat it
             // like a sign-out. Retain the last good value if there is one.
             if let lastSnapshot {
                 state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt)
             } else {
-                state = .keychainDenied
+                state = .tokenStoreUnavailable
             }
         }
     }

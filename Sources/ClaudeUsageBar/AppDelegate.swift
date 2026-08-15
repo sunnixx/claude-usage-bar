@@ -1,5 +1,6 @@
 import AppKit
 import ClaudeUsageCore
+import ClaudeUsageTokens
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {

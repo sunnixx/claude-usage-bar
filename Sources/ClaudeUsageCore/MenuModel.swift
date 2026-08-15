@@ -52,8 +52,12 @@ public enum MenuModel {
             return [MenuRow(text: "Token expired — open Claude Code to refresh")]
         case .unreachable:
             return [MenuRow(text: "Can't reach Anthropic")]
-        case .keychainDenied:
+        case .tokenStoreUnavailable:
+            #if os(macOS)
             return [MenuRow(text: "Keychain access denied — allow in Keychain Access")]
+            #else
+            return [MenuRow(text: "Can't read Claude Code credentials")]
+            #endif
         case .loaded(let snapshot):
             return usageRows(snapshot, now: now, calendar: calendar, locale: locale)
                 + [MenuRow(text: "Updated \(Formatting.clockTime(snapshot.fetchedAt, locale: locale, timeZone: timeZone))")]

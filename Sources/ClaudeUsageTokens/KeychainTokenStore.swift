@@ -1,19 +1,7 @@
+#if os(macOS)
+import ClaudeUsageCore
 import Foundation
 import Security
-
-public enum TokenLookup: Equatable, Sendable {
-    case token(String)
-    case missing
-}
-
-public protocol TokenProviding: Sendable {
-    func accessToken() throws -> TokenLookup
-}
-
-public enum KeychainError: Error, Equatable {
-    case malformed
-    case status(OSStatus)
-}
 
 /// Reads the OAuth token Claude Code stores in the login Keychain.
 ///
@@ -41,26 +29,15 @@ public struct KeychainTokenStore: TokenProviding {
 
         switch status {
         case errSecSuccess:
-            guard let data = item as? Data else { throw KeychainError.malformed }
-            return .token(try Self.parseToken(from: data))
+            guard let data = item as? Data else { throw TokenStoreError.malformed }
+            return .token(try CredentialsJSON.parseToken(from: data))
         case errSecItemNotFound:
             // Claude Code is not signed in on this machine. An expected state,
             // not a failure.
             return .missing
         default:
-            throw KeychainError.status(status)
+            throw TokenStoreError.platform(status)
         }
-    }
-
-    public static func parseToken(from data: Data) throws -> String {
-        guard
-            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let oauth = root["claudeAiOauth"] as? [String: Any],
-            let token = oauth["accessToken"] as? String,
-            !token.isEmpty
-        else {
-            throw KeychainError.malformed
-        }
-        return token
     }
 }
+#endif

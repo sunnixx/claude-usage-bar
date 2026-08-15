@@ -3,7 +3,7 @@ import Testing
 @testable import ClaudeUsageCore
 
 private struct StubTokens: TokenProviding {
-    let result: Result<TokenLookup, KeychainError>
+    let result: Result<TokenLookup, TokenStoreError>
 
     static let valid = StubTokens(result: .success(.token("sk-ant-oat01-test")))
     static let missing = StubTokens(result: .success(.missing))
@@ -69,8 +69,8 @@ private func respond(_ status: Int, _ body: Data) -> UsageClient.Transport {
         }
     }
 
-    @Test func treatsAThrownKeychainErrorAsUnavailableNotNoToken() async throws {
-        await #expect(throws: UsageError.keychainUnavailable) {
+    @Test func treatsAThrownTokenStoreErrorAsUnavailableNotNoToken() async throws {
+        await #expect(throws: UsageError.tokenStoreUnavailable) {
             try await client(tokens: StubTokens.broken, transport: respond(200, Data())).fetchUsage()
         }
     }

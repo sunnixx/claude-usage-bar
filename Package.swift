@@ -1,19 +1,31 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+// The executable is macOS-only until the Linux and Windows tray backends land
+// (Tasks 6 and 7). Until then, Linux and Windows CI builds and tests the
+// portable targets, which is the point of the phasing: everything verifiable is
+// proven green before any unrunnable code is written.
+var targets: [Target] = [
+    .target(name: "ClaudeUsageCore"),
+    .target(name: "ClaudeUsageTokens", dependencies: ["ClaudeUsageCore"]),
+    .testTarget(
+        name: "ClaudeUsageCoreTests",
+        dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens"],
+        resources: [.copy("Fixtures")]
+    ),
+]
+
+#if os(macOS)
+targets.append(
+    .executableTarget(
+        name: "ClaudeUsageBar",
+        dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens"]
+    )
+)
+#endif
+
 let package = Package(
     name: "ClaudeUsageBar",
     platforms: [.macOS(.v14)],
-    targets: [
-        .target(name: "ClaudeUsageCore"),
-        .executableTarget(
-            name: "ClaudeUsageBar",
-            dependencies: ["ClaudeUsageCore"]
-        ),
-        .testTarget(
-            name: "ClaudeUsageCoreTests",
-            dependencies: ["ClaudeUsageCore"],
-            resources: [.copy("Fixtures")]
-        ),
-    ]
+    targets: targets
 )

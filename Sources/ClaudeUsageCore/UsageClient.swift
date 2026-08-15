@@ -1,15 +1,22 @@
 import Foundation
 
+// URLSession lives in Foundation on Apple platforms and in FoundationNetworking
+// on Linux and Windows.
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 public enum UsageError: Error, Equatable {
     case noToken
     case unauthorized
     case transport
     case badStatus(Int)
     case decoding
-    /// Keychain lookup threw (denied prompt, locked keychain, corrupt item) —
-    /// distinct from `.noToken`, which means the lookup succeeded and found
-    /// nothing. Treated as transient so a good value is never blanked.
-    case keychainUnavailable
+    /// The token store threw (denied prompt, locked keychain, unreadable or
+    /// malformed credentials file) — distinct from `.noToken`, which means the
+    /// lookup succeeded and found nothing. Treated as transient so a good value
+    /// is never blanked.
+    case tokenStoreUnavailable
 }
 
 public protocol UsageFetching: Sendable {
@@ -47,7 +54,7 @@ public struct UsageClient: UsageFetching {
         do {
             lookup = try tokens.accessToken()
         } catch {
-            throw UsageError.keychainUnavailable
+            throw UsageError.tokenStoreUnavailable
         }
 
         guard case .token(let token) = lookup else {

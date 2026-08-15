@@ -51,7 +51,7 @@ import Testing
         #expect(MenuModel.statusTitle(for: .loaded(snapshot)).isCritical == true)
     }
 
-    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .keychainDenied])
+    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .tokenStoreUnavailable])
     func showsADashWhenThereIsNoValue(state: UsageState) {
         let title = MenuModel.statusTitle(for: state)
 
@@ -66,7 +66,7 @@ import Testing
         #expect(title.text == "37%")
     }
 
-    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .keychainDenied])
+    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .tokenStoreUnavailable])
     func isStaleIsFalseForNonStaleStates(state: UsageState) {
         #expect(MenuModel.statusTitle(for: state).isStale == false)
     }
@@ -134,6 +134,6 @@ import Testing
         #expect(rows(.noToken, now: now) == ["Not signed in to Claude Code"])
         #expect(rows(.unauthorized, now: now) == ["Token expired — open Claude Code to refresh"])
         #expect(rows(.unreachable, now: now) == ["Can't reach Anthropic"])
-        #expect(rows(.keychainDenied, now: now) == ["Keychain access denied — allow in Keychain Access"])
+        #expect(rows(.tokenStoreUnavailable, now: now) == ["Keychain access denied — allow in Keychain Access"])
     }
 }
