@@ -9,7 +9,7 @@ private final class RecordingTray: TrayBackend, @unchecked Sendable {
     var contents: [TrayContent] { lock.lock(); defer { lock.unlock() }; return _contents }
 
     func run(handlers: TrayHandlers) -> Never { fatalError("not used in tests") }
-    func update(_ content: TrayContent) {
+    func update(_ content: TrayContent, force: Bool) {
         lock.lock(); _contents.append(content); lock.unlock()
     }
 }

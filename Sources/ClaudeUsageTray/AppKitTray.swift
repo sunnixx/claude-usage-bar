@@ -7,6 +7,10 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
     private var handlers: TrayHandlers?
     /// Guarded by `lock`; read on the main thread, written from the poll task.
     private var pending: TrayContent?
+    /// Guarded by `lock` alongside `pending`. Sticky once set: if a forced
+    /// update is queued and a later, unforced update overwrites `pending`
+    /// before it drains, the force must not be lost — see `update`.
+    private var pendingForce = false
     private var shown: TrayContent?
     private let lock = NSLock()
 
@@ -39,9 +43,10 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
         fatalError("NSApplication.run returned")
     }
 
-    public func update(_ content: TrayContent) {
+    public func update(_ content: TrayContent, force: Bool) {
         lock.lock()
         pending = content
+        pendingForce = pendingForce || force
         lock.unlock()
         // Drain inline when already on the main thread — notably when this is
         // called synchronously from `menuWillOpen`, via the driver's forced
@@ -70,13 +75,19 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
 
         lock.lock()
         let next = pending
+        let forced = pendingForce
         pending = nil
+        pendingForce = false
         lock.unlock()
 
         guard let next else { return }
         // Skip the rebuild when nothing changed, so a poll landing while the
-        // menu is open doesn't flicker or reset the current highlight.
-        guard next != shown else { return }
+        // menu is open doesn't flicker or reset the current highlight — unless
+        // `forced`, which a menu-open rebuild sets specifically because the
+        // relative reset captions it is about to recompute from `Date()` can
+        // have moved on even though `next` compares equal to `shown`. See
+        // `RenderGate`.
+        guard RenderGate.shouldRender(next, shownAs: shown, force: forced) else { return }
         shown = next
         render(next)
     }
@@ -95,6 +106,11 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
     private func renderTitle(_ states: [(Provider, UsageState)]) {
         guard let button = statusItem?.button else { return }
         button.image = nil
+        // Pairs with `image = nil` above: `run()` sets `.imageLeading` for
+        // its initial placeholder glyph and never resets it once the marks
+        // move into the attributed title instead, which can leave a stray
+        // leading gap sized for an image that no longer exists.
+        button.imagePosition = .noImage
 
         let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         let title = NSMutableAttributedString(string: " ")

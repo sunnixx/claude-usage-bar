@@ -27,7 +27,7 @@ private final class MutableClock: @unchecked Sendable {
 
 private final class RecordingTray: TrayBackend, @unchecked Sendable {
     func run(handlers: TrayHandlers) -> Never { fatalError("not used in tests") }
-    func update(_ content: TrayContent) {}
+    func update(_ content: TrayContent, force: Bool) {}
 }
 
 private struct StubLogin: LoginItemControlling {

@@ -298,6 +298,12 @@ public final class UsageDriver: @unchecked Sendable {
             return
         }
         lastPublishedState = content
-        tray.update(content)
+        // `force` is threaded all the way to the backend, not swallowed
+        // here: `TrayContent` equality (states + login flag) can't see the
+        // relative reset captions a backend recomputes from `Date()` at
+        // render time, so a backend's own "unchanged, skip it" guard needs
+        // the same signal this dedupe check just used — see
+        // `TrayBackend.update`'s doc comment and `RenderGate`.
+        tray.update(content, force: force)
     }
 }

@@ -11,6 +11,7 @@ import Testing
 private final class SpyTray: TrayBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var _updates: [TrayContent] = []
+    private var _forced: [Bool] = []
 
     var updates: [TrayContent] {
         lock.lock()
@@ -18,13 +19,22 @@ private final class SpyTray: TrayBackend, @unchecked Sendable {
         return _updates
     }
 
+    /// Parallel to `updates`: the `force` flag `UsageDriver.publish()` passed
+    /// alongside each corresponding `TrayContent`.
+    var forced: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _forced
+    }
+
     func run(handlers: TrayHandlers) -> Never {
         fatalError("SpyTray.run should never be called in UsageDriverTests")
     }
 
-    func update(_ content: TrayContent) {
+    func update(_ content: TrayContent, force: Bool) {
         lock.lock()
         _updates.append(content)
+        _forced.append(force)
         lock.unlock()
     }
 }
@@ -211,6 +221,28 @@ private func sampleSnapshot() throws -> ProviderSnapshot {
         #expect(await driver.currentInterval == base)
 
         // Drain the fetch `refreshNow()` triggered so nothing is left dangling.
+        await gated.waitUntilGated()
+        await gated.release(with: .failure(UsageError.transport))
+    }
+
+    /// `makeHandlers().menuWillOpen` calls `publish(force: true)`
+    /// synchronously, precisely so the tray rebuilds with current relative
+    /// reset captions when the menu is about to be drawn. Before this fix,
+    /// `force` never reached `tray.update` at all — the driver's own dedupe
+    /// let a forced publish through, but the value handed to the backend
+    /// carried no signal that would let it bypass its own "unchanged, skip
+    /// it" guard. This asserts `force` actually arrives at the backend.
+    @Test func menuWillOpenPublishesWithForceTrue() async {
+        let tray = SpyTray()
+        let gated = GatedClient()
+        let driver = UsageDriver(tray: tray, clients: [(.anthropic, gated)], loginItem: StubLoginItem())
+
+        driver.makeHandlers().menuWillOpen()
+
+        #expect(tray.forced.last == true)
+
+        // `menuWillOpen` also calls `refreshNow()`, which fires a detached
+        // fetch against `gated` — drain it so nothing is left dangling.
         await gated.waitUntilGated()
         await gated.release(with: .failure(UsageError.transport))
     }

@@ -82,6 +82,10 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
 
     /// Guarded by `lock`; written from any thread via `update`.
     private var pending: TrayContent?
+    /// Guarded by `lock` alongside `pending`. Sticky once set: if a forced
+    /// update is queued and a later, unforced update overwrites `pending`
+    /// before it is consumed, the force must not be lost — see `update`.
+    private var pendingForce = false
     /// UI thread only: every read and write — including in `showMenu`, which
     /// runs on this same thread via `dispatch` — happens there, so it needs
     /// no lock of its own.
@@ -185,9 +189,10 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         exit(0)
     }
 
-    public func update(_ content: TrayContent) {
+    public func update(_ content: TrayContent, force: Bool) {
         lock.lock()
         pending = content
+        pendingForce = pendingForce || force
         lock.unlock()
 
         // On the UI thread — notably when `update` is invoked synchronously
@@ -274,8 +279,12 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     private func applyShownOnly() {
         lock.lock()
         let next = pending
+        let forced = pendingForce
         lock.unlock()
-        guard let next, next != shown else { return }
+        // `pending`/`pendingForce` are NOT cleared here — see the doc
+        // comment above; `applyPending` (via the posted `kUpdateMessage`)
+        // still owns consuming them.
+        guard let next, RenderGate.shouldRender(next, shownAs: shown, force: forced) else { return }
         shown = next
         needsRender = true
     }
@@ -283,10 +292,12 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     private func applyPending() {
         lock.lock()
         let next = pending
+        let forced = pendingForce
         pending = nil
+        pendingForce = false
         lock.unlock()
 
-        if let next, next != shown {
+        if let next, RenderGate.shouldRender(next, shownAs: shown, force: forced) {
             shown = next
             needsRender = true
         }
@@ -300,20 +311,25 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     private func render(_ content: TrayContent?) {
         guard let content else { return }
 
-        // The 32x32 icon has room for one number, so — same as before Codex
-        // existed — it shows the first configured provider's reading; the
-        // tooltip echoes the same text. Both providers' readings are fully
-        // visible in the dropdown's per-provider sections.
-        let title = MenuModel.statusTitle(for: content.states.first?.1 ?? .loading)
+        // The 32x32 icon has room for exactly one number, so it shows only
+        // the first provider with an actual value — `statusSegments` (the
+        // same list `AppKitTray`'s marks come from) already drops any
+        // provider that isn't signed in, so a Codex-only user gets Codex's
+        // reading here rather than a permanently empty placeholder for
+        // Anthropic. `szTip` has no such size constraint, so the tooltip
+        // composes every configured provider's reading; both are fully
+        // visible in the dropdown's per-provider sections too.
+        let segments = MenuModel.statusSegments(for: content.states)
+        let primary = segments.first
         let fresh = Win32Icon.make(
-            percent: title.percent,
-            critical: title.isCritical,
-            stale: title.isStale
+            percent: primary?.percent,
+            critical: primary?.isCritical ?? false,
+            stale: primary?.isStale ?? false
         )
         var data = notifyData()
         data.uFlags = UINT(NIF_ICON) | UINT(NIF_TIP)
         data.hIcon = fresh
-        fill(tip: title.text, into: &data)
+        fill(tip: Self.tooltip(for: segments), into: &data)
         _ = Shell_NotifyIconW(DWORD(NIM_MODIFY), &data)
 
         // Replace only after the shell has taken the new one, then free the old
@@ -335,10 +351,19 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         data.uCallbackMessage = kTrayMessage
         data.hIcon = icon
         if let shown {
-            let title = MenuModel.statusTitle(for: shown.states.first?.1 ?? .loading)
-            fill(tip: title.text, into: &data)
+            fill(tip: Self.tooltip(for: MenuModel.statusSegments(for: shown.states)), into: &data)
         }
         _ = Shell_NotifyIconW(DWORD(NIM_ADD), &data)
+    }
+
+    /// Composes the tooltip from every provider with an actual value —
+    /// `segments` already comes from `MenuModel.statusSegments`, which drops
+    /// providers with no value, so a signed-out provider is simply absent
+    /// here rather than shown as an empty placeholder. e.g. "Claude 37% ·
+    /// Codex 8%", or just "Codex 8%" if only Codex is signed in. Well under
+    /// `szTip`'s 128-UTF-16-unit limit for any realistic provider count.
+    private static func tooltip(for segments: [StatusSegment]) -> String {
+        segments.map { "\($0.provider.displayName) \($0.text)" }.joined(separator: " · ")
     }
 
     private func showMenu() {
