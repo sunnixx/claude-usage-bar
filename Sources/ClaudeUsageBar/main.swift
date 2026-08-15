@@ -11,8 +11,12 @@ let loginItem: any LoginItemControlling = MacLoginItem()
 let tray: any TrayBackend = AppIndicatorTray()
 let tokens: any TokenProviding = CredentialsFileTokenStore()
 let loginItem: any LoginItemControlling = LinuxLoginItem()
+#elseif os(Windows)
+let tray: any TrayBackend = Win32Tray()
+let tokens: any TokenProviding = CredentialsFileTokenStore()
+let loginItem: any LoginItemControlling = WindowsLoginItem()
 #else
-#error("No tray backend for this platform yet — see Task 7.")
+#error("Unsupported platform.")
 #endif
 
 let driver = UsageDriver(

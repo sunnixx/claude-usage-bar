@@ -255,6 +255,10 @@ Each is behind a `LoginItemControlling` protocol with `isEnabled` and
 Out of scope: installers, AppImage/Flatpak/winget packaging, Windows code
 signing, notarization.
 
+The Windows `.exe` keeps the default file icon: SwiftPM has no hook for the
+resource compiler. The tray icon is generated at runtime, so this affects only
+how the binary looks in Explorer.
+
 ## Testing
 
 - **Core** — every existing test runs unchanged on all three platforms in CI.

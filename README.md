@@ -2,11 +2,15 @@
 
 [![CI](https://github.com/sunnixx/claude-usage-bar/actions/workflows/ci.yml/badge.svg)](https://github.com/sunnixx/claude-usage-bar/actions/workflows/ci.yml)
 
-A macOS menu bar readout of your Claude subscription usage — the 5-hour
-session window at a glance, with the weekly window and per-model scopes in the
-dropdown.
+A macOS, Windows, and Linux menu bar / tray readout of your Claude
+subscription usage — the 5-hour session window at a glance, with the weekly
+window and per-model scopes in the dropdown.
 
 ![ClaudeUsageBar in the macOS menu bar, showing 7% of the session window used and the dropdown with the weekly window and per-model scopes](docs/images/screenshot.png)
+
+The screenshot above is the macOS build. The Windows and Linux trays present
+the same information through their platform's own notification-area
+conventions — see below.
 
 It reads the OAuth token Claude Code already stores in your login Keychain and
 polls `https://api.anthropic.com/api/oauth/usage` once a minute. It never
@@ -35,6 +39,17 @@ is installed — that applies to every tray app, not just this one.
 
 The token is read from `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`),
 read-only. Nothing here ever writes it.
+
+### Windows
+
+    swift build -c release
+
+The tray shows the percentage drawn into the icon, because the Windows
+notification area has no text field beside an icon. The tooltip carries the
+same reading. Right-click the icon for the menu.
+
+The token is read from `%USERPROFILE%\.claude\.credentials.json` (or
+`%CLAUDE_CONFIG_DIR%`), read-only.
 
 ## Test
 
