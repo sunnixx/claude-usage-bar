@@ -16,6 +16,9 @@ public struct MenuRow: Equatable, Sendable {
     public let bar: String?
     public let reset: String?
     public let isIndented: Bool
+    /// How close this window is to its limit. `.normal` for rows that carry no
+    /// percentage (message rows), which never render a meter.
+    public let severity: Severity
 
     public init(
         label: String,
@@ -29,6 +32,7 @@ public struct MenuRow: Equatable, Sendable {
         self.bar = bar
         self.reset = reset
         self.isIndented = isIndented
+        self.severity = percent.map(Formatting.severity(for:)) ?? .normal
     }
 }
 
@@ -103,9 +107,15 @@ public enum MenuModel {
                             now: now, calendar: calendar, locale: locale))
         }
         for scope in snapshot.scopedWeekly {
+            // A scope that resets with the weekly window doesn't need to repeat
+            // the date the row above already shows.
+            let repeatsWeeklyReset = scope.resetsAt != nil && scope.resetsAt == snapshot.week?.resetsAt
             rows.append(row(
                 label: scope.label,
-                window: UsageWindow(percent: scope.percent, resetsAt: scope.resetsAt),
+                window: UsageWindow(
+                    percent: scope.percent,
+                    resetsAt: repeatsWeeklyReset ? nil : scope.resetsAt
+                ),
                 now: now, calendar: calendar, locale: locale,
                 indented: true
             ))
