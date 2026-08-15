@@ -1,6 +1,13 @@
 #if os(Windows)
 import WinSDK
 
+/// `RGB` is a C preprocessor macro (`(BYTE)(r) | ((WORD)(g) << 8) |
+/// ((DWORD)(b) << 16)` from wingdi.h) — macros do not import into Swift, so
+/// the WinSDK overlay does not expose one. Reimplemented directly.
+private func RGB(_ r: BYTE, _ g: BYTE, _ b: BYTE) -> COLORREF {
+    COLORREF(r) | (COLORREF(g) << 8) | (COLORREF(b) << 16)
+}
+
 /// `Shell_NotifyIcon` gives you a 16x16 icon and a tooltip — there is no
 /// equivalent of NSStatusItem's title, so Windows cannot show "37%" as text
 /// beside an icon. It draws the number into the icon instead, which is what

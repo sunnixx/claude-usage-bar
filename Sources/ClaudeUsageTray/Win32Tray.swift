@@ -10,6 +10,12 @@ private let kMenuRefresh: UINT = 1
 private let kMenuLogin: UINT = 2
 private let kMenuQuit: UINT = 3
 
+/// `HWND_MESSAGE` is a C macro (`((HWND)-3)` from winuser.h), which — like
+/// `RGB` in Win32Icon.swift — does not import into Swift. Reimplemented
+/// directly: a message-only window's parent, recognised by its exact bit
+/// pattern rather than by any real window handle.
+private let HWND_MESSAGE = HWND(bitPattern: -3)
+
 /// Windows tray via Shell_NotifyIcon on a message-only window.
 ///
 /// Win32 UI objects belong to the thread that created them, so every call below
@@ -78,8 +84,15 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
 
         applyPending()
 
+        // GetMessageW's BOOL return imports as Swift Bool, not Int32, under
+        // the WinSDK overlay — it collapses the C tri-state (-1 error / 0
+        // WM_QUIT / nonzero message) to true/false, so the rare -1 "invalid
+        // window handle" case is indistinguishable here from an ordinary
+        // WM_QUIT. That is an acceptable simplification: this loop's only job
+        // is to keep pumping until quit, and -1 is not a case this app's own
+        // window handle should ever produce.
         var msg = MSG()
-        while GetMessageW(&msg, nil, 0, 0) > 0 {
+        while GetMessageW(&msg, nil, 0, 0) {
             TranslateMessage(&msg)
             DispatchMessageW(&msg)
         }
