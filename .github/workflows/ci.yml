@@ -5,6 +5,17 @@ on:
     branches: ['**']
   pull_request:
 
+# This matrix deliberately does NOT run one identical toolchain on all three
+# OSes:
+#   - macOS builds with the Xcode-preinstalled Swift toolchain (no setup-swift
+#     step): pairing setup-swift's Swift 6.0.3 toolchain with the runner's
+#     Xcode 26.6 SDK fails ("this SDK is not supported by the compiler").
+#   - Linux and Windows install Swift 6.1 via setup-swift: Swift 6.0.3's
+#     Windows toolchain hits a cyclic-module bug (ucrt -> _Builtin_intrinsics
+#     -> ucrt), fixed in 6.1.
+# What this proves: swift-tools-version 6.0 compatibility on macOS, Linux,
+# and Windows, each on its best available toolchain. What it does NOT prove:
+# behavioral parity across a single pinned toolchain version.
 jobs:
   test:
     name: ${{ matrix.os }}
@@ -24,7 +35,7 @@ jobs:
       # Linux and Windows, which have no preinstalled Swift toolchain.
       - name: Set up Swift
         if: runner.os != 'macOS'
-        uses: SwiftyLab/setup-swift@latest
+        uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: "6.1"
 
