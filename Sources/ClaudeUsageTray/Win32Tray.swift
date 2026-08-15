@@ -10,15 +10,16 @@ private let kMenuRefresh: UINT = 1
 private let kMenuLogin: UINT = 2
 private let kMenuQuit: UINT = 3
 
-/// `HWND_MESSAGE` is a C macro (`((HWND)-3)` from winuser.h), which — like
-/// `RGB` in Win32Icon.swift — does not import into Swift. Reimplemented
-/// directly: a message-only window's parent, recognised by its exact bit
-/// pattern rather than by any real window handle. A function rather than a
-/// global `let`: `HWND?` is a raw pointer type, which Swift 6's strict
-/// concurrency checking refuses to let live in shared global mutable state
-/// (even though this particular value is a fixed sentinel, not a handle to
-/// anything actually shared) — a computed value sidesteps that entirely.
-private func hwndMessage() -> HWND? { HWND(bitPattern: -3) }
+/// WS_POPUP (0x80000000) and WS_EX_TOOLWINDOW (0x00000080), from winuser.h —
+/// hardcoded as same-width unsigned literals rather than referencing the
+/// WinSDK overlay's own `WS_POPUP`/`WS_EX_TOOLWINDOW` names. WS_POPUP's top
+/// bit set makes it exactly Int32.min's bit pattern; depending on how the
+/// overlay happened to type that macro, `DWORD(WS_POPUP)` risked either a
+/// silent wraparound or a runtime trap converting a negative `Int32` to an
+/// unsigned `DWORD`. A `DWORD`-typed literal sidesteps that ambiguity
+/// entirely — 0x8000_0000 fits UInt32 exactly, so no conversion happens.
+private let wsPopup: DWORD = 0x8000_0000
+private let wsExToolWindow: DWORD = 0x0000_0080
 
 /// Explorer (and therefore the taskbar and notification area) can restart at
 /// any time — a crash, a shell update installing, or the user restarting it
@@ -108,11 +109,27 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
             _ = RegisterClassExW(&wc)
         }
 
-        // HWND_MESSAGE: a message-only window, so nothing appears on screen.
+        // A REAL top-level window (WS_POPUP, parent nil), NOT an
+        // HWND_MESSAGE message-only window. This used to be HWND_MESSAGE,
+        // which seemed right for a window that only ever needs to receive
+        // WndProc callbacks and never appears on screen — but Explorer
+        // publishes "TaskbarCreated" (used by addIcon()/dispatch() below to
+        // recover the tray icon after an Explorer restart) as an
+        // HWND_BROADCAST send, and Microsoft's documented contract for
+        // message-only windows is that they do NOT receive broadcast
+        // messages at all. With an HWND_MESSAGE parent, the TaskbarCreated
+        // handling below compiled, looked complete, and was silently
+        // unreachable — worse than not having it, since nothing about the
+        // code made that obvious. A top-level window, by contrast, is a
+        // valid HWND_BROADCAST recipient. It stays invisible because
+        // ShowWindow is never called on it and it's created at zero size;
+        // WS_EX_TOOLWINDOW additionally keeps it out of the Alt-Tab list.
+        // Do not add a ShowWindow call here — that is the only thing that
+        // would make it appear.
         let created = Self.className.withUnsafeBufferPointer { buffer in
             CreateWindowExW(
-                0, buffer.baseAddress, buffer.baseAddress, 0, 0, 0, 0, 0,
-                hwndMessage(), nil, instance, nil
+                wsExToolWindow, buffer.baseAddress, buffer.baseAddress, wsPopup,
+                0, 0, 0, 0, nil, nil, instance, nil
             )
         }
         // If either RegisterClassExW or CreateWindowExW failed, `window`
@@ -338,7 +355,17 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
 
         var point = POINT()
         GetCursorPos(&point)
-        // Required or the menu will not dismiss when the user clicks elsewhere.
+        // Required or the menu will not dismiss when the user clicks elsewhere
+        // — this is Microsoft's own documented idiom for a notification-icon
+        // popup menu (SetForegroundWindow before TrackPopupMenu, WM_NULL
+        // after). It depends on `window` being a genuine top-level window
+        // with real z-order/foreground-eligibility semantics, which only
+        // became true once `window` stopped being HWND_MESSAGE (see the
+        // comment on window creation in `run`) — a message-only window has
+        // no z-order for SetForegroundWindow to act on, so this call was
+        // very likely a silent no-op before that fix, and menu dismissal may
+        // well have been unreliable as a result. Unverified either way: this
+        // was never run.
         SetForegroundWindow(window)
         _ = TrackPopupMenu(
             menu, UINT(TPM_RIGHTBUTTON), point.x, point.y, 0, window, nil
