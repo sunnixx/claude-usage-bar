@@ -36,6 +36,7 @@ import Testing
     @Test func buildsContentFromStateAndLoginFlag() throws {
         let state = UsageState.loaded(try snapshot())
         let content = TrayContent(
+            states: [(.anthropic, state)],
             title: MenuModel.statusTitle(for: state),
             rows: MenuModel.rows(
                 for: state, now: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z")),

@@ -19,9 +19,10 @@ let loginItem: any LoginItemControlling = WindowsLoginItem()
 #error("Unsupported platform.")
 #endif
 
+// Task 7 adds Codex to this list; for now only Anthropic is wired.
 let driver = UsageDriver(
     tray: tray,
-    client: UsageClient(tokens: tokens),
+    clients: [(.anthropic, UsageClient(tokens: tokens))],
     loginItem: loginItem
 )
 driver.start()

@@ -121,12 +121,12 @@ private func sampleSnapshot() throws -> ProviderSnapshot {
     /// again afterwards so a later refresh isn't stuck no-op'ing forever.
     @Test func atMostOneFetchIsEverInFlight() async throws {
         let gated = GatedClient()
-        let driver = UsageDriver(tray: SpyTray(), client: gated, loginItem: StubLoginItem())
+        let driver = UsageDriver(tray: SpyTray(), clients: [(.anthropic, gated)], loginItem: StubLoginItem())
 
         async let concurrentRefreshes: Void = withTaskGroup(of: Void.self) { group in
-            group.addTask { await driver.refresh() }
-            group.addTask { await driver.refresh() }
-            group.addTask { await driver.refresh() }
+            group.addTask { await driver.refresh(.anthropic) }
+            group.addTask { await driver.refresh(.anthropic) }
+            group.addTask { await driver.refresh(.anthropic) }
         }
 
         // `isFetching` is set (under lock) before the winning call ever
@@ -142,7 +142,7 @@ private func sampleSnapshot() throws -> ProviderSnapshot {
         #expect(await gated.callCount == 1)
 
         // The guard must have been cleared: a fresh refresh fires again.
-        async let next: Void = driver.refresh()
+        async let next: Void = driver.refresh(.anthropic)
         await gated.waitUntilGated()
         #expect(await gated.callCount == 2)
         await gated.release(with: .success(try sampleSnapshot()))
@@ -155,10 +155,10 @@ private func sampleSnapshot() throws -> ProviderSnapshot {
     /// reach the client.
     @Test func theInFlightGuardClearsEvenWhenTheFetchThrows() async {
         let client = FailingClient()
-        let driver = UsageDriver(tray: SpyTray(), client: client, loginItem: StubLoginItem())
+        let driver = UsageDriver(tray: SpyTray(), clients: [(.anthropic, client)], loginItem: StubLoginItem())
 
-        await driver.refresh()
-        await driver.refresh()
+        await driver.refresh(.anthropic)
+        await driver.refresh(.anthropic)
 
         #expect(await client.callCount == 2)
     }
@@ -187,14 +187,14 @@ private func sampleSnapshot() throws -> ProviderSnapshot {
     /// again) is not separately exercised.
     @Test func onlyUserInitiatedRefreshResetsTheBackoff() async throws {
         let gated = GatedClient()
-        let driver = UsageDriver(tray: SpyTray(), client: gated, loginItem: StubLoginItem())
+        let driver = UsageDriver(tray: SpyTray(), clients: [(.anthropic, gated)], loginItem: StubLoginItem())
         let base = await driver.currentInterval
         #expect(base == UsageRefreshPolicy.baseInterval)
 
         // Three poll-loop-style failures: capture the interval after each one.
         var observed: [TimeInterval] = []
         for _ in 0..<3 {
-            async let r: Void = driver.refresh()
+            async let r: Void = driver.refresh(.anthropic)
             await gated.waitUntilGated()
             await gated.release(with: .failure(UsageError.transport))
             await r
