@@ -1,5 +1,7 @@
 # ClaudeUsageBar
 
+[![CI](https://github.com/sunnixx/claude-usage-bar/actions/workflows/ci.yml/badge.svg)](https://github.com/sunnixx/claude-usage-bar/actions/workflows/ci.yml)
+
 A macOS menu bar readout of your Claude subscription usage — the 5-hour
 session window at a glance, with the weekly window and per-model scopes in the
 dropdown.
