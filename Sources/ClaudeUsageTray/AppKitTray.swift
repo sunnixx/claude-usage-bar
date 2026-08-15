@@ -110,12 +110,25 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
         guard let menu = statusItem?.menu else { return }
         menu.removeAllItems()
 
-        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        // Usage rows are drawn (label, tinted meter, percentage, reset caption);
+        // message rows such as "Not signed in to Claude Code" or "Updated 13:44"
+        // stay ordinary text items. One shared label-column width keeps every
+        // meter starting at the same x.
+        let labelColumnWidth = UsageRowView.labelColumnWidth(for: content.rows)
         for row in content.rows {
-            let line = MenuModel.monospaceLine(row)
-            let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
-            item.attributedTitle = NSAttributedString(string: line, attributes: [.font: font])
+            let item = NSMenuItem(title: row.label, action: nil, keyEquivalent: "")
             item.isEnabled = false
+            if row.percent == nil {
+                item.attributedTitle = NSAttributedString(
+                    string: row.label,
+                    attributes: [
+                        .font: NSFont.menuFont(ofSize: 12),
+                        .foregroundColor: NSColor.secondaryLabelColor,
+                    ]
+                )
+            } else {
+                item.view = UsageRowView(row: row, labelColumnWidth: labelColumnWidth)
+            }
             menu.addItem(item)
         }
 
