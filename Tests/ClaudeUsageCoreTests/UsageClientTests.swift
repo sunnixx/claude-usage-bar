@@ -66,7 +66,10 @@ private func respond(_ status: Int, _ body: Data) -> UsageClient.Transport {
         #expect(request.url?.absoluteString == "https://api.anthropic.com/api/oauth/usage")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-ant-oat01-test")
         #expect(request.value(forHTTPHeaderField: "anthropic-beta") == "oauth-2025-04-20")
-        #expect(request.value(forHTTPHeaderField: "User-Agent") == "claude-usage-bar/1.0 (macOS)")
+        // Not hardcoded to a platform: UsageClient.userAgent now reports
+        // whichever platform this test is actually running on (F6 — it used
+        // to always say "macOS", even on Linux and Windows).
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == UsageClient.userAgent)
     }
 
     @Test func reportsAMissingToken() async throws {
