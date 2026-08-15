@@ -21,6 +21,17 @@ public final class UsageDriver: @unchecked Sendable {
     /// two different providers may fetch concurrently, but never two fetches
     /// of the same provider at once.
     private var fetching: Set<Provider> = []
+    /// The instant each provider becomes eligible for its next poll-loop
+    /// fetch, set to `now() + policy.interval` right after any refresh of
+    /// that provider completes (poll-triggered or not). A provider absent
+    /// from this dictionary (never yet refreshed) is due immediately. This is
+    /// what makes a backed-off provider's own `interval` actually govern its
+    /// own request rate — see `pollTick()`.
+    private var nextDue: [Provider: Date] = [:]
+    /// Test seam only: production always uses the default, which reads the
+    /// wall clock exactly as before. Tests inject a controllable clock so
+    /// due-time comparisons are deterministic instead of racing real time.
+    private let now: @Sendable () -> Date
 
     /// Guards the publish decision and the `tray.update` call as a single
     /// atomic unit — separate from `lock`, which guards `policies`/`fetching`
@@ -41,7 +52,8 @@ public final class UsageDriver: @unchecked Sendable {
     public init(
         tray: any TrayBackend,
         clients: [(Provider, any UsageFetching)],
-        loginItem: any LoginItemControlling
+        loginItem: any LoginItemControlling,
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.tray = tray
         self.clients = clients
@@ -49,6 +61,7 @@ public final class UsageDriver: @unchecked Sendable {
         self.policies = Dictionary(
             uniqueKeysWithValues: clients.map { ($0.0, UsageRefreshPolicy()) }
         )
+        self.now = now
     }
 
     public func makeHandlers() -> TrayHandlers {
@@ -81,10 +94,8 @@ public final class UsageDriver: @unchecked Sendable {
         Task.detached { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                for (provider, _) in self.clients {
-                    await self.refresh(provider)
-                }
-                try? await Task.sleep(for: .seconds(self.currentInterval))
+                await self.pollTick()
+                try? await Task.sleep(for: .seconds(self.timeUntilNextWake()))
             }
         }
     }
@@ -103,10 +114,27 @@ public final class UsageDriver: @unchecked Sendable {
     /// Internal rather than private — `@testable import` reaches this to drive
     /// and observe the poll/backoff machinery directly and deterministically
     /// in the driver tests. Not part of the type's public API. The minimum
-    /// across providers, so the loop ticks often enough for the most eager one
-    /// (a backed-off provider must never slow down a healthy one's polling).
+    /// across providers' own backoff intervals — a raw policy reading, not a
+    /// due-time computation; see `timeUntilNextWake()` for what the real poll
+    /// loop actually sleeps on.
     var currentInterval: TimeInterval {
         withLock { policies.values.map(\.interval).min() ?? UsageRefreshPolicy.baseInterval }
+    }
+
+    /// What `start()`'s poll loop actually sleeps for between ticks: the
+    /// smallest remaining time until any provider becomes due, clamped at
+    /// zero. This is what decouples "how often the loop wakes" from "which
+    /// providers it fetches" — the loop can wake early for an eager provider
+    /// without that forcing a backed-off provider to be fetched too; that
+    /// decision is `pollTick()`'s due check.
+    private func timeUntilNextWake() -> TimeInterval {
+        withLock {
+            let now = self.now()
+            let remaining = clients.map { provider, _ in
+                max(0, (nextDue[provider] ?? .distantPast).timeIntervalSince(now))
+            }
+            return remaining.min() ?? UsageRefreshPolicy.baseInterval
+        }
     }
 
     /// Test hook: exposes a single provider's backoff interval.
@@ -114,8 +142,30 @@ public final class UsageDriver: @unchecked Sendable {
         withLock { policies[provider]?.interval ?? 0 }
     }
 
-    /// Test hook: drives one full round across every configured provider
-    /// without the poll loop's sleep.
+    /// One iteration of the poll loop: refreshes only the providers that are
+    /// currently due, per each provider's own `nextDue` time. A provider that
+    /// isn't due yet is left alone entirely — no fetch, no state change —
+    /// until a later tick finds it due, or `refreshNow()` bypasses the gate
+    /// outright. This is the per-provider throttle: without it, every
+    /// provider would be fetched on every tick regardless of its own backoff,
+    /// which is exactly the bug this gate exists to close.
+    ///
+    /// Internal, not private — `@testable import` drives this directly so
+    /// tests can exercise a single tick deterministically, without the real
+    /// loop's sleep.
+    func pollTick() async {
+        let due = withLock {
+            let now = self.now()
+            return clients.map(\.0).filter { (nextDue[$0] ?? .distantPast) <= now }
+        }
+        for provider in due {
+            await refresh(provider)
+        }
+    }
+
+    /// Test hook: drives one full round across every configured provider,
+    /// bypassing the due check — like `refreshNow()`, but without resetting
+    /// backoff — and without the poll loop's sleep.
     func refreshAllForTesting() async {
         for (provider, _) in clients {
             await refresh(provider)
@@ -125,7 +175,10 @@ public final class UsageDriver: @unchecked Sendable {
     /// Out-of-band refresh from "Refresh Now" or menu-open. Resets any backoff
     /// so a user-initiated retry isn't stuck on a backed-off interval. Never
     /// called from the poll loop itself. Applies to every configured
-    /// provider — a manual refresh means "retry everything now".
+    /// provider — a manual refresh means "retry everything now" — and, unlike
+    /// `pollTick()`, ignores each provider's `nextDue`: a user asking for a
+    /// refresh gets one regardless of where that provider's own backoff
+    /// currently stands.
     func refreshNow() {
         withLock {
             for provider in policies.keys {
@@ -143,7 +196,10 @@ public final class UsageDriver: @unchecked Sendable {
     /// At most one fetch is ever in flight per provider, whether triggered by
     /// the poll loop, "Refresh Now", or opening the menu. If one is already
     /// running for this provider, this is a no-op; a different provider may
-    /// still fetch concurrently.
+    /// still fetch concurrently. Always bumps that provider's `nextDue` to
+    /// `now() + policy.interval` afterwards, whatever triggered it — a manual
+    /// refresh pushes out the next scheduled poll for that provider too, so
+    /// one doesn't land redundantly right on top of the other.
     func refresh(_ provider: Provider) async {
         guard let client = clients.first(where: { $0.0 == provider })?.1 else { return }
 
@@ -165,6 +221,10 @@ public final class UsageDriver: @unchecked Sendable {
             withLock { policies[provider]?.record(failure: error) }
         } catch {
             withLock { policies[provider]?.record(failure: .transport) }
+        }
+        withLock {
+            let interval = policies[provider]?.interval ?? UsageRefreshPolicy.baseInterval
+            nextDue[provider] = now().addingTimeInterval(interval)
         }
         publish()
     }
