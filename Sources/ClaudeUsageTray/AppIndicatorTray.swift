@@ -195,7 +195,7 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         // not something this environment can observe. If it turns out not to
         // fire, refresh-on-open silently degrades to poll-interval staleness
         // — not a crash, not wrong data, just not as fresh as intended.
-        connectSignal(gcast(menu), "show") { [weak self] in
+        connectSignal(UnsafeMutableRawPointer(menu), "show") { [weak self] in
             self?.handlers?.menuWillOpen()
         }
 
@@ -226,7 +226,7 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         action: @escaping () -> Void
     ) {
         let item = gtk_menu_item_new_with_label(title)
-        connectSignal(item, "activate", action)
+        connectSignal(UnsafeMutableRawPointer(item), "activate", action)
         gtk_menu_shell_append(gcast(menu), item)
     }
 
@@ -238,36 +238,53 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     ) {
         let item = gtk_check_menu_item_new_with_label(title)
         gtk_check_menu_item_set_active(gcast(item), checked ? 1 : 0)
-        connectSignal(item, "activate", action)
+        connectSignal(UnsafeMutableRawPointer(item), "activate", action)
         gtk_menu_shell_append(gcast(menu), item)
+    }
+
+    /// Holds a Swift closure so it can cross the C boundary as a raw pointer.
+    /// Declared at class scope, not nested inside `connectSignal`, because
+    /// Swift does not allow a type to be nested inside a generic function —
+    /// and even without that restriction, `connectSignal` itself takes a
+    /// plain `UnsafeMutableRawPointer?` rather than a generic typed pointer,
+    /// sidestepping the type-inference-at-call-site problem a generic
+    /// version would otherwise have where the caller supplies no other
+    /// context to pin down the pointee type (as at the "show" call site
+    /// below, which has no typed GTK argument to infer from).
+    private final class SignalBox {
+        let action: () -> Void
+        init(_ action: @escaping () -> Void) { self.action = action }
     }
 
     /// Bridges a capture-free Swift closure to any zero-argument GTK signal
     /// (`(GtkWidget *, gpointer) -> void` handlers — "activate" and "show"
     /// both match this shape). The box is freed by the destroy notify when
-    /// the connected widget goes away.
-    private func connectSignal<T>(
-        _ widget: UnsafeMutablePointer<T>?,
+    /// the connected widget goes away. Takes a raw pointer rather than a
+    /// typed one: `g_signal_connect_data`'s target-object argument only ever
+    /// needs to be an opaque `gpointer` identifying the GObject, never a
+    /// specific GTK subtype, so callers pass whatever typed pointer they
+    /// already have via `UnsafeMutableRawPointer(_:)`.
+    private func connectSignal(
+        _ widget: UnsafeMutableRawPointer?,
         _ signal: String,
         _ action: @escaping () -> Void
     ) {
-        final class Box { let action: () -> Void; init(_ a: @escaping () -> Void) { action = a } }
-        let box = Unmanaged.passRetained(Box(action)).toOpaque()
+        let box = Unmanaged.passRetained(SignalBox(action)).toOpaque()
 
         g_signal_connect_data(
-            UnsafeMutableRawPointer(widget),
+            widget,
             signal,
             unsafeBitCast(
                 { (_: UnsafeMutableRawPointer?, data: UnsafeMutableRawPointer?) in
                     guard let data else { return }
-                    Unmanaged<Box>.fromOpaque(data).takeUnretainedValue().action()
+                    Unmanaged<SignalBox>.fromOpaque(data).takeUnretainedValue().action()
                 } as @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Void,
                 to: GCallback.self
             ),
             box,
             { data, _ in
                 guard let data else { return }
-                Unmanaged<Box>.fromOpaque(data).release()
+                Unmanaged<SignalBox>.fromOpaque(data).release()
             },
             GConnectFlags(rawValue: 0)
         )
