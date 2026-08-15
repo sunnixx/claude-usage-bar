@@ -13,8 +13,12 @@ private let kMenuQuit: UINT = 3
 /// `HWND_MESSAGE` is a C macro (`((HWND)-3)` from winuser.h), which — like
 /// `RGB` in Win32Icon.swift — does not import into Swift. Reimplemented
 /// directly: a message-only window's parent, recognised by its exact bit
-/// pattern rather than by any real window handle.
-private let HWND_MESSAGE = HWND(bitPattern: -3)
+/// pattern rather than by any real window handle. A function rather than a
+/// global `let`: `HWND?` is a raw pointer type, which Swift 6's strict
+/// concurrency checking refuses to let live in shared global mutable state
+/// (even though this particular value is a fixed sentinel, not a handle to
+/// anything actually shared) — a computed value sidesteps that entirely.
+private func hwndMessage() -> HWND? { HWND(bitPattern: -3) }
 
 /// Windows tray via Shell_NotifyIcon on a message-only window.
 ///
@@ -67,7 +71,7 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         window = Self.className.withUnsafeBufferPointer { buffer in
             CreateWindowExW(
                 0, buffer.baseAddress, buffer.baseAddress, 0, 0, 0, 0, 0,
-                HWND_MESSAGE, nil, instance, nil
+                hwndMessage(), nil, instance, nil
             )
         }
         // Route WndProc callbacks back to this instance. Unretained: the
