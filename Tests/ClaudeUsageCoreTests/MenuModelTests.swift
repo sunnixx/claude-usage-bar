@@ -65,7 +65,7 @@ import Testing
 
     @Test func keepsShowingTheLastValueWhenStale() throws {
         let snapshot = try loadedSnapshot()
-        let title = MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt))
+        let title = MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt, reason: .offline))
 
         #expect(title.text == "37%")
     }
@@ -81,7 +81,7 @@ import Testing
 
     @Test func isStaleIsTrueWhenStale() throws {
         let snapshot = try loadedSnapshot()
-        #expect(MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt)).isStale == true)
+        #expect(MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt, reason: .offline)).isStale == true)
     }
 
     // MARK: rows
@@ -129,7 +129,7 @@ import Testing
         let snapshot = try loadedSnapshot()
         let now = try date("2026-08-04T08:10:00Z")
 
-        let text = rows(.stale(snapshot, since: snapshot.fetchedAt), now: now)
+        let text = rows(.stale(snapshot, since: snapshot.fetchedAt, reason: .offline), now: now)
 
         #expect(text.last == "Offline — updated 07:48")
     }
@@ -252,5 +252,92 @@ extension MenuModelTests {
         #expect(rows[0].severity == .critical)   // session 92
         #expect(rows[1].severity == .warning)    // week 80
         #expect(rows[2].severity == .normal)     // Fable 10
+    }
+}
+
+// MARK: - Multi-provider segments and sectioned rows
+
+extension MenuModelTests {
+    private func loaded(_ provider: Provider, _ percent: Int, plan: String? = nil) throws -> UsageState {
+        .loaded(ProviderSnapshot(
+            provider: provider,
+            planName: plan,
+            windows: [UsageWindow(label: "Session (5h)", percent: percent, resetsAt: nil, role: .primary)],
+            fetchedAt: try date("2026-08-04T07:48:00Z")
+        ))
+    }
+
+    @Test func buildsOneSegmentPerAvailableProvider() throws {
+        let segments = MenuModel.statusSegments(for: [
+            (.anthropic, try loaded(.anthropic, 37)),
+            (.codex, try loaded(.codex, 4)),
+        ])
+
+        #expect(segments.count == 2)
+        #expect(segments[0].provider == .anthropic)
+        #expect(segments[0].text == "37%")
+        #expect(segments[1].provider == .codex)
+        #expect(segments[1].text == "4%")
+    }
+
+    @Test func omitsAProviderThatIsNotSignedIn() throws {
+        let segments = MenuModel.statusSegments(for: [
+            (.anthropic, try loaded(.anthropic, 37)),
+            (.codex, .noToken),
+        ])
+
+        #expect(segments.count == 1)
+        #expect(segments[0].provider == .anthropic)
+    }
+
+    @Test func fallsBackToADashWhenNoProviderHasAValue() {
+        let segments = MenuModel.statusSegments(for: [(.anthropic, .noToken), (.codex, .noToken)])
+
+        #expect(segments.count == 1)
+        #expect(segments[0].text == "—")
+        #expect(segments[0].percent == nil)
+    }
+
+    @Test func marksACriticalSegmentIndependently() throws {
+        let segments = MenuModel.statusSegments(for: [
+            (.anthropic, try loaded(.anthropic, 95)),
+            (.codex, try loaded(.codex, 4)),
+        ])
+
+        #expect(segments[0].isCritical)
+        #expect(!segments[1].isCritical)
+    }
+
+    @Test func headsEachProviderSectionWithItsName() throws {
+        let rows = MenuModel.rows(
+            for: [(.anthropic, try loaded(.anthropic, 37)), (.codex, try loaded(.codex, 4, plan: "free"))],
+            now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+
+        let headers = rows.filter(\.isSectionHeader)
+        #expect(headers.count == 2)
+        #expect(headers[0].label == "CLAUDE")
+        #expect(headers[1].label == "CODEX · free")
+    }
+
+    @Test func doesNotHeadASingleProviderSection() throws {
+        // With only one provider configured the heading is noise.
+        let rows = MenuModel.rows(
+            for: [(.anthropic, try loaded(.anthropic, 37))],
+            now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        #expect(rows.filter(\.isSectionHeader).isEmpty)
+    }
+
+    @Test func showsEachProvidersErrorUnderItsOwnHeading() throws {
+        let rows = MenuModel.rows(
+            for: [(.anthropic, try loaded(.anthropic, 37)), (.codex, .noToken)],
+            now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        let labels = rows.map(\.label)
+        #expect(labels.contains { $0.contains("Not signed in") })
     }
 }

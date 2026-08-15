@@ -19,13 +19,17 @@ public struct MenuRow: Equatable, Sendable {
     /// How close this window is to its limit. `.normal` for rows that carry no
     /// percentage (message rows), which never render a meter.
     public let severity: Severity
+    /// A per-provider section heading, e.g. "CODEX · free". Renders as a plain
+    /// label with no percent, bar or reset.
+    public let isSectionHeader: Bool
 
     public init(
         label: String,
         percent: Int? = nil,
         bar: String? = nil,
         reset: String? = nil,
-        isIndented: Bool = false
+        isIndented: Bool = false,
+        isSectionHeader: Bool = false
     ) {
         self.label = label
         self.percent = percent
@@ -33,7 +37,17 @@ public struct MenuRow: Equatable, Sendable {
         self.reset = reset
         self.isIndented = isIndented
         self.severity = percent.map(Formatting.severity(for:)) ?? .normal
+        self.isSectionHeader = isSectionHeader
     }
+}
+
+/// One provider's contribution to the menu bar item.
+public struct StatusSegment: Equatable, Sendable {
+    public let provider: Provider
+    public let text: String
+    public let percent: Int?
+    public let isCritical: Bool
+    public let isStale: Bool
 }
 
 /// Turns poller state into the exact strings the macOS and Linux tray
@@ -61,32 +75,91 @@ public enum MenuModel {
 
     public static func rows(
         for state: UsageState,
+        provider: Provider = .anthropic,
         now: Date,
         calendar: Calendar,
         locale: Locale,
         timeZone: TimeZone
     ) -> [MenuRow] {
+        let cli = provider == .anthropic ? "Claude Code" : "Codex"
         switch state {
         case .loading:
             return [MenuRow(label: "Loading…")]
         case .noToken:
-            return [MenuRow(label: "Not signed in to Claude Code")]
+            return [MenuRow(label: "Not signed in to \(cli)")]
         case .unauthorized:
-            return [MenuRow(label: "Token expired — open Claude Code to refresh")]
+            return [MenuRow(label: "Token expired — open \(cli) to refresh")]
         case .unreachable:
             return [MenuRow(label: "Can't reach Anthropic")]
         case .tokenStoreUnavailable:
             #if os(macOS)
             return [MenuRow(label: "Keychain access denied — allow in Keychain Access")]
             #else
-            return [MenuRow(label: "Can't read Claude Code credentials")]
+            return [MenuRow(label: "Can't read \(cli) credentials")]
             #endif
         case .loaded(let snapshot):
             return usageRows(snapshot, now: now, calendar: calendar, locale: locale)
                 + [MenuRow(label: "Updated \(Formatting.clockTime(snapshot.fetchedAt, locale: locale, timeZone: timeZone))")]
-        case .stale(let snapshot, let since):
+        case .stale(let snapshot, let since, let reason):
             return usageRows(snapshot, now: now, calendar: calendar, locale: locale)
-                + [MenuRow(label: "Offline — updated \(Formatting.clockTime(since, locale: locale, timeZone: timeZone))")]
+                + [MenuRow(label: "\(reason.rowText) — updated \(Formatting.clockTime(since, locale: locale, timeZone: timeZone))")]
+        }
+    }
+
+    public static func statusSegments(for states: [(Provider, UsageState)]) -> [StatusSegment] {
+        let segments = states.compactMap { provider, state -> StatusSegment? in
+            // A provider with no value contributes nothing rather than a dash —
+            // two dashes in the menu bar would be noise.
+            guard let percent = state.displayPercent else { return nil }
+            let isStale: Bool
+            if case .stale = state { isStale = true } else { isStale = false }
+            return StatusSegment(
+                provider: provider,
+                text: Formatting.percentText(percent),
+                percent: percent,
+                isCritical: Formatting.isCritical(percent),
+                isStale: isStale
+            )
+        }
+
+        guard segments.isEmpty else { return segments }
+        return [StatusSegment(
+            provider: states.first?.0 ?? .anthropic,
+            text: Formatting.percentText(nil),
+            percent: nil,
+            isCritical: false,
+            isStale: false
+        )]
+    }
+
+    public static func rows(
+        for states: [(Provider, UsageState)],
+        now: Date,
+        calendar: Calendar,
+        locale: Locale,
+        timeZone: TimeZone
+    ) -> [MenuRow] {
+        let showHeaders = states.count > 1
+        return states.flatMap { provider, state -> [MenuRow] in
+            var section: [MenuRow] = []
+            if showHeaders {
+                var heading = provider.displayName.uppercased()
+                if let plan = planName(of: state) { heading += " · \(plan)" }
+                section.append(MenuRow(label: heading, isSectionHeader: true))
+            }
+            section.append(contentsOf: rows(
+                for: state, provider: provider,
+                now: now, calendar: calendar, locale: locale, timeZone: timeZone
+            ))
+            return section
+        }
+    }
+
+    private static func planName(of state: UsageState) -> String? {
+        switch state {
+        case .loaded(let snapshot): return snapshot.planName
+        case .stale(let snapshot, _, _): return snapshot.planName
+        default: return nil
         }
     }
 
