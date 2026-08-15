@@ -83,9 +83,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             locale: .current,
             timeZone: .current
         ) {
-            let item = NSMenuItem(title: row.text, action: nil, keyEquivalent: "")
+            let line = MenuModel.monospaceLine(row)
+            let item = NSMenuItem(title: line, action: nil, keyEquivalent: "")
             item.attributedTitle = NSAttributedString(
-                string: row.text,
+                string: line,
                 attributes: [.font: font]
             )
             item.isEnabled = false

@@ -28,7 +28,7 @@ import Testing
 
     private func rows(_ state: UsageState, now: Date) -> [String] {
         MenuModel.rows(for: state, now: now, calendar: calendar, locale: locale, timeZone: utc)
-            .map(\.text)
+            .map(MenuModel.monospaceLine)
     }
 
     // MARK: statusTitle
@@ -139,5 +139,71 @@ import Testing
         #else
         #expect(rows(.tokenStoreUnavailable, now: now) == ["Can't read Claude Code credentials"])
         #endif
+    }
+
+    // MARK: structured rows
+
+    @Test func buildsStructuredRowsForASnapshot() throws {
+        let rows = MenuModel.rows(
+            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+
+        let session = try #require(rows.first)
+        #expect(session.label == "Session (5h)")
+        #expect(session.percent == 37)
+        #expect(session.bar == "\u{2593}\u{2593}\u{2593}\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}")
+        #expect(session.isIndented == false)
+    }
+
+    @Test func marksScopedRowsAsIndented() throws {
+        let rows = MenuModel.rows(
+            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        let scoped = try #require(rows.first { $0.isIndented })
+        #expect(scoped.label == "Fable")
+        #expect(scoped.percent == 10)
+    }
+
+    @Test func messageRowsCarryOnlyALabel() throws {
+        let rows = MenuModel.rows(
+            for: .noToken, now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        let row = try #require(rows.first)
+        #expect(row.label == "Not signed in to Claude Code")
+        #expect(row.percent == nil)
+        #expect(row.bar == nil)
+        #expect(row.reset == nil)
+    }
+
+    @Test func composesAMonospaceLineWithAlignedColumns() {
+        let plain = MenuRow(label: "This week", percent: 26,
+                            bar: "\u{2593}\u{2593}\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}", reset: "resets Sat, Aug 8")
+        let indented = MenuRow(label: "Fable", percent: 10,
+                               bar: "\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}", reset: nil, isIndented: true)
+
+        let a = MenuModel.monospaceLine(plain)
+        let b = MenuModel.monospaceLine(indented)
+
+        // The percent sign and the bar must sit at the same index on both rows --
+        // the indent is absorbed by the label field, not prepended afterwards.
+        #expect(a.distance(from: a.startIndex, to: a.firstIndex(of: "%")!) == 17)
+        #expect(b.distance(from: b.startIndex, to: b.firstIndex(of: "%")!) == 17)
+        #expect(a.distance(from: a.startIndex, to: a.firstIndex(of: "\u{2593}")!) == 20)
+        #expect(b.distance(from: b.startIndex, to: b.firstIndex(of: "\u{2593}")!) == 20)
+    }
+
+    @Test func statusTitleCarriesTheRawPercent() throws {
+        let title = MenuModel.statusTitle(for: .loaded(try loadedSnapshot()))
+        #expect(title.percent == 37)
+        // The gauge glyph is the status item's template image, not part of this
+        // string -- do not add it here.
+        #expect(title.text == "37%")
+    }
+
+    @Test func statusTitlePercentIsNilWithoutAValue() {
+        #expect(MenuModel.statusTitle(for: .noToken).percent == nil)
     }
 }
