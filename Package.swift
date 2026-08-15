@@ -14,6 +14,10 @@ var targets: [Target] = [
         dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens"],
         resources: [.copy("Fixtures")]
     ),
+    .testTarget(
+        name: "ClaudeUsageTrayTests",
+        dependencies: ["ClaudeUsageCore", "ClaudeUsageTray"]
+    ),
 ]
 
 #if os(macOS)
