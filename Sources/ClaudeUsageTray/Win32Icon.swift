@@ -88,7 +88,8 @@ enum Win32Icon {
 }
 
 extension String {
-    /// UTF-16, NUL-terminated, for the -W Win32 entry points.
-    var wide: [UInt16] { Array(utf16) + [0] }
+    /// UTF-16, NUL-terminated, for the -W Win32 entry points. `public`: also
+    /// used from `WindowsLoginItem` in the `ClaudeUsageBar` target.
+    public var wide: [UInt16] { Array(utf16) + [0] }
 }
 #endif

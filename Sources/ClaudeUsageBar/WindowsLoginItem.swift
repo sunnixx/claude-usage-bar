@@ -1,5 +1,6 @@
 #if os(Windows)
 import ClaudeUsageCore
+import ClaudeUsageTray
 import Foundation
 import WinSDK
 
@@ -37,13 +38,18 @@ struct WindowsLoginItem: LoginItemControlling {
             // appended — REG_SZ values must be NUL-terminated, and a length
             // that stops one UInt16 short would truncate the last character
             // instead of the terminator.
-            exe.withUnsafeBufferPointer { buffer in
-                buffer.baseAddress?.withMemoryRebound(
+            // Explicit closure parameter/return types below: without them the
+            // type checker times out on this nested
+            // withUnsafeBufferPointer/withMemoryRebound/RegSetValueExW chain
+            // ("unable to type-check this expression in reasonable time").
+            exe.withUnsafeBufferPointer { (buffer: UnsafeBufferPointer<UInt16>) -> Void in
+                guard let base = buffer.baseAddress else { return }
+                let byteCount = DWORD(buffer.count * 2)
+                base.withMemoryRebound(
                     to: BYTE.self, capacity: buffer.count * 2
-                ) { bytes in
+                ) { (bytes: UnsafePointer<BYTE>) -> Void in
                     _ = RegSetValueExW(
-                        key, Self.valueName.wide, 0, DWORD(REG_SZ),
-                        bytes, DWORD(buffer.count * 2)
+                        key, Self.valueName.wide, 0, DWORD(REG_SZ), bytes, byteCount
                     )
                 }
             }
