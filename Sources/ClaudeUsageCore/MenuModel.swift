@@ -91,56 +91,22 @@ public enum MenuModel {
     }
 
     private static func usageRows(
-        _ snapshot: UsageSnapshot,
+        _ snapshot: ProviderSnapshot,
         now: Date,
         calendar: Calendar,
         locale: Locale
     ) -> [MenuRow] {
-        var rows: [MenuRow] = []
-
-        if let session = snapshot.session {
-            rows.append(row(label: "Session (5h)", window: session,
-                            now: now, calendar: calendar, locale: locale))
-        }
-        if let week = snapshot.week {
-            rows.append(row(label: "This week", window: week,
-                            now: now, calendar: calendar, locale: locale))
-        }
-        for scope in snapshot.scopedWeekly {
-            // A scope that resets with the weekly window doesn't need to repeat
-            // the date the row above already shows.
-            let repeatsWeeklyReset = scope.resetsAt != nil && scope.resetsAt == snapshot.week?.resetsAt
-            rows.append(row(
-                label: scope.label,
-                window: UsageWindow(
-                    percent: scope.percent,
-                    resetsAt: repeatsWeeklyReset ? nil : scope.resetsAt
+        snapshot.windows.map { window in
+            MenuRow(
+                label: window.label,
+                percent: window.percent,
+                bar: Formatting.progressBar(percent: window.percent),
+                reset: Formatting.resetDescription(
+                    window.resetsAt, now: now, calendar: calendar, locale: locale
                 ),
-                now: now, calendar: calendar, locale: locale,
-                indented: true
-            ))
+                isIndented: window.isScoped
+            )
         }
-
-        return rows
-    }
-
-    private static func row(
-        label: String,
-        window: UsageWindow,
-        now: Date,
-        calendar: Calendar,
-        locale: Locale,
-        indented: Bool = false
-    ) -> MenuRow {
-        MenuRow(
-            label: label,
-            percent: window.percent,
-            bar: Formatting.progressBar(percent: window.percent),
-            reset: Formatting.resetDescription(
-                window.resetsAt, now: now, calendar: calendar, locale: locale
-            ),
-            isIndented: indented
-        )
     }
 
     /// Composes the padded, column-aligned line the macOS menu renders in a

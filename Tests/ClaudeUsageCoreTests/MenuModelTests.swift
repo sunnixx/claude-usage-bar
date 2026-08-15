@@ -17,11 +17,15 @@ import Testing
         try #require(ISO8601Flexible.date(from: iso))
     }
 
-    private func loadedSnapshot() throws -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(percent: 37, resetsAt: try date("2026-08-04T09:00:00Z")),
-            week: UsageWindow(percent: 26, resetsAt: try date("2026-08-08T07:00:00Z")),
-            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: nil)],
+    private func loadedSnapshot() throws -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: 37, resetsAt: try date("2026-08-04T09:00:00Z")),
+                UsageWindow(label: "This week", percent: 26, resetsAt: try date("2026-08-08T07:00:00Z")),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, isScoped: true),
+            ],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
     }
@@ -41,10 +45,10 @@ import Testing
     }
 
     @Test func marksHighUsageAsCritical() throws {
-        let snapshot = UsageSnapshot(
-            session: UsageWindow(percent: 93, resetsAt: nil),
-            week: nil,
-            scopedWeekly: [],
+        let snapshot = ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [UsageWindow(label: "Session (5h)", percent: 93, resetsAt: nil)],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
 
@@ -105,10 +109,13 @@ import Testing
 
     @Test func omitsScopeRowsWhenThePlanHasNone() throws {
         let now = try date("2026-08-04T07:48:00Z")
-        let snapshot = UsageSnapshot(
-            session: UsageWindow(percent: 4, resetsAt: nil),
-            week: UsageWindow(percent: 0, resetsAt: nil),
-            scopedWeekly: [],
+        let snapshot = ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: 4, resetsAt: nil),
+                UsageWindow(label: "This week", percent: 0, resetsAt: nil),
+            ],
             fetchedAt: now
         )
 
@@ -208,23 +215,31 @@ import Testing
     }
 }
 
-// MARK: - Severity and scope-reset de-duplication
+// MARK: - Severity
+//
+// The scope-reset de-duplication tests that used to live here moved to
+// UsageSnapshotTests: the behaviour itself moved into the Anthropic decoder,
+// since it's a property of the decoded data, not of MenuModel's presentation.
 
 extension MenuModelTests {
     private func snapshot(
         sessionPercent: Int,
         weekPercent: Int,
         scopeResetsAt: Date?
-    ) throws -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(percent: sessionPercent, resetsAt: try date("2026-08-04T09:00:00Z")),
-            week: UsageWindow(percent: weekPercent, resetsAt: try date("2026-08-08T07:00:00Z")),
-            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: scopeResetsAt)],
+    ) throws -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: sessionPercent, resetsAt: try date("2026-08-04T09:00:00Z")),
+                UsageWindow(label: "This week", percent: weekPercent, resetsAt: try date("2026-08-08T07:00:00Z")),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: scopeResetsAt, isScoped: true),
+            ],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
     }
 
-    private func builtRows(_ snapshot: UsageSnapshot) throws -> [MenuRow] {
+    private func builtRows(_ snapshot: ProviderSnapshot) throws -> [MenuRow] {
         MenuModel.rows(
             for: .loaded(snapshot), now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
@@ -237,42 +252,5 @@ extension MenuModelTests {
         #expect(rows[0].severity == .critical)   // session 92
         #expect(rows[1].severity == .warning)    // week 80
         #expect(rows[2].severity == .normal)     // Fable 10
-    }
-
-    @Test func omitsAScopeResetThatRepeatsTheWeeklyOne() throws {
-        // Fable resets at the same instant as the weekly window, so repeating
-        // the date on both rows is noise.
-        let shared = try date("2026-08-08T07:00:00Z")
-        let rows = try builtRows(try snapshot(sessionPercent: 37, weekPercent: 26, scopeResetsAt: shared))
-
-        let scope = try #require(rows.first { $0.isIndented })
-        #expect(scope.reset == nil)
-        #expect(rows[1].reset != nil, "the weekly row must still show it")
-    }
-
-    @Test func keepsAScopeResetThatDiffersFromTheWeeklyOne() throws {
-        let rows = try builtRows(
-            try snapshot(
-                sessionPercent: 37, weekPercent: 26,
-                scopeResetsAt: try date("2026-08-09T07:00:00Z")
-            )
-        )
-
-        let scope = try #require(rows.first { $0.isIndented })
-        #expect(scope.reset != nil)
-    }
-
-    @Test func keepsAScopeResetWhenThereIsNoWeeklyWindow() throws {
-        let noWeek = UsageSnapshot(
-            session: UsageWindow(percent: 37, resetsAt: try date("2026-08-04T09:00:00Z")),
-            week: nil,
-            scopedWeekly: [
-                ScopedWindow(label: "Fable", percent: 10, resetsAt: try date("2026-08-08T07:00:00Z"))
-            ],
-            fetchedAt: try date("2026-08-04T07:48:00Z")
-        )
-
-        let scope = try #require(try builtRows(noWeek).first { $0.isIndented })
-        #expect(scope.reset != nil)
     }
 }

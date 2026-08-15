@@ -2,8 +2,8 @@ import Foundation
 
 public enum UsageState: Equatable, Sendable {
     case loading
-    case loaded(UsageSnapshot)
-    case stale(UsageSnapshot, since: Date)
+    case loaded(ProviderSnapshot)
+    case stale(ProviderSnapshot, since: Date)
     case noToken
     case unauthorized
     case unreachable
@@ -16,7 +16,7 @@ public enum UsageState: Equatable, Sendable {
     public var displayPercent: Int? {
         switch self {
         case .loaded(let snapshot), .stale(let snapshot, _):
-            return snapshot.session?.percent
+            return snapshot.primary?.percent
         case .loading, .noToken, .unauthorized, .unreachable, .tokenStoreUnavailable:
             return nil
         }
@@ -34,7 +34,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
     public private(set) var state: UsageState = .loading
     public private(set) var interval: TimeInterval = UsageRefreshPolicy.baseInterval
 
-    private var lastSnapshot: UsageSnapshot?
+    private var lastSnapshot: ProviderSnapshot?
 
     /// Consecutive `.noToken` / `.unauthorized` results. Claude Code rotates
     /// the OAuth token roughly every 8 hours, rewriting the Keychain item; a
@@ -47,7 +47,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
 
     public init() {}
 
-    public mutating func record(success snapshot: UsageSnapshot) {
+    public mutating func record(success snapshot: ProviderSnapshot) {
         lastSnapshot = snapshot
         state = .loaded(snapshot)
         interval = Self.baseInterval

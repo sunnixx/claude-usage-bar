@@ -3,11 +3,14 @@ import Testing
 @testable import ClaudeUsageCore
 
 @Suite struct UsageRefreshPolicyTests {
-    private func snapshot(percent: Int, at seconds: TimeInterval) -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(percent: percent, resetsAt: nil),
-            week: UsageWindow(percent: 10, resetsAt: nil),
-            scopedWeekly: [],
+    private func snapshot(percent: Int, at seconds: TimeInterval) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: percent, resetsAt: nil),
+                UsageWindow(label: "This week", percent: 10, resetsAt: nil),
+            ],
             fetchedAt: Date(timeIntervalSince1970: seconds)
         )
     }

@@ -44,7 +44,7 @@ private func respond(_ status: Int, _ body: Data) -> UsageClient.Transport {
         let body = try Fixture.data("full")
         let snapshot = try await client(transport: respond(200, body)).fetchUsage()
 
-        #expect(snapshot.session?.percent == 37)
+        #expect(snapshot.primary?.percent == 37)
         #expect(snapshot.fetchedAt == fetchedAt)
     }
 

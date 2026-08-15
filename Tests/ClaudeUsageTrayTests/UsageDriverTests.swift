@@ -57,10 +57,10 @@ private final class StubLoginItem: LoginItemControlling, @unchecked Sendable {
 /// pending continuation are mutated from whichever task calls `fetchUsage()`.
 private actor GatedClient: UsageFetching {
     private(set) var callCount = 0
-    private var pendingFetch: CheckedContinuation<UsageSnapshot, Error>?
+    private var pendingFetch: CheckedContinuation<ProviderSnapshot, Error>?
     private var waiter: CheckedContinuation<Void, Never>?
 
-    func fetchUsage() async throws -> UsageSnapshot {
+    func fetchUsage() async throws -> ProviderSnapshot {
         callCount += 1
         return try await withCheckedThrowingContinuation { continuation in
             pendingFetch = continuation
@@ -78,7 +78,7 @@ private actor GatedClient: UsageFetching {
         }
     }
 
-    func release(with result: Result<UsageSnapshot, Error>) {
+    func release(with result: Result<ProviderSnapshot, Error>) {
         pendingFetch?.resume(with: result)
         pendingFetch = nil
     }
@@ -88,20 +88,22 @@ private actor GatedClient: UsageFetching {
 private actor FailingClient: UsageFetching {
     private(set) var callCount = 0
 
-    func fetchUsage() async throws -> UsageSnapshot {
+    func fetchUsage() async throws -> ProviderSnapshot {
         callCount += 1
         throw UsageError.transport
     }
 }
 
-private func sampleSnapshot() throws -> UsageSnapshot {
-    UsageSnapshot(
-        session: UsageWindow(
-            percent: 12,
-            resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
-        ),
-        week: nil,
-        scopedWeekly: [],
+private func sampleSnapshot() throws -> ProviderSnapshot {
+    ProviderSnapshot(
+        provider: .anthropic,
+        planName: nil,
+        windows: [
+            UsageWindow(
+                label: "Session (5h)", percent: 12,
+                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
+            )
+        ],
         fetchedAt: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z"))
     )
 }

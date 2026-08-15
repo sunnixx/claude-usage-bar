@@ -13,17 +13,21 @@ import Testing
         return calendar
     }
 
-    private func snapshot() throws -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(
-                percent: 37,
-                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
-            ),
-            week: UsageWindow(
-                percent: 26,
-                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-08T07:00:00Z"))
-            ),
-            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: nil)],
+    private func snapshot() throws -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(
+                    label: "Session (5h)", percent: 37,
+                    resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
+                ),
+                UsageWindow(
+                    label: "This week", percent: 26,
+                    resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-08T07:00:00Z"))
+                ),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, isScoped: true),
+            ],
             fetchedAt: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z"))
         )
     }
