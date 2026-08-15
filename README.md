@@ -72,7 +72,7 @@ credential.
 
     swift test
 
-83 tests on macOS, 87 on Linux and Windows — the extra 8 cover the
+86 tests on macOS, 94 on Linux and Windows — the extra 8 cover the
 file-based token store (`#if !os(macOS)`), which macOS doesn't use because it
 reads the Keychain instead. Everything is covered except the platform UI
 layers themselves: `AppKitTray`, `AppIndicatorTray`, `Win32Tray`, the

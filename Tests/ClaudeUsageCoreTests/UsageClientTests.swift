@@ -66,10 +66,20 @@ private func respond(_ status: Int, _ body: Data) -> UsageClient.Transport {
         #expect(request.url?.absoluteString == "https://api.anthropic.com/api/oauth/usage")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-ant-oat01-test")
         #expect(request.value(forHTTPHeaderField: "anthropic-beta") == "oauth-2025-04-20")
-        // Not hardcoded to a platform: UsageClient.userAgent now reports
-        // whichever platform this test is actually running on (F6 — it used
-        // to always say "macOS", even on Linux and Windows).
-        #expect(request.value(forHTTPHeaderField: "User-Agent") == UsageClient.userAgent)
+        // Pinned per-platform, not compared against UsageClient.userAgent
+        // itself: that would be tautological (it would still pass if the
+        // constant were "" or "junk") and would stop pinning what the header
+        // actually says. UsageClient.userAgent reports whichever platform
+        // this test is actually running on (F6 — it used to always say
+        // "macOS", even on Linux and Windows), so the expectation must too.
+        #if os(macOS)
+        let expected = "claude-usage-bar/1.0 (macOS)"
+        #elseif os(Linux)
+        let expected = "claude-usage-bar/1.0 (Linux)"
+        #elseif os(Windows)
+        let expected = "claude-usage-bar/1.0 (Windows)"
+        #endif
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == expected)
     }
 
     @Test func reportsAMissingToken() async throws {

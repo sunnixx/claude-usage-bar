@@ -31,14 +31,37 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     private var pending: TrayContent?
     private var shown: TrayContent?
 
-    /// GTK thread only. True between the menu's "show" and "hide" signals —
-    /// i.e. while it is actually open on screen. Guards `render()` against
-    /// swapping the `GtkMenu` out from under itself; see the guard there.
+    /// GTK thread only. True between the menu's "show" and "hide"/"deactivate"
+    /// signals — i.e. while it is actually open on screen. Guards `render()`
+    /// against swapping the `GtkMenu` out from under itself; see the guard
+    /// there.
     private var isMenuOpen = false
+    /// GTK thread only. Set alongside `isMenuOpen = true`; used by
+    /// `applyPending()`'s watchdog to tell how long the menu has been open.
+    /// This environment cannot verify that "hide"/"deactivate" ever fire on
+    /// a real DBusMenu host (see the UNVERIFIED note on "show" in `render()`)
+    /// — if they simply never do, `isMenuOpen` would otherwise stay true
+    /// forever, permanently freezing the dropdown rows at whatever content
+    /// was `shown` when it was last open, even though the label/icon keep
+    /// updating. That is a silent, permanent functional regression, not a
+    /// crash and not wrong data, but with no other symptom that would ever
+    /// surface it. Two base poll intervals (this tray has no visibility into
+    /// `UsageRefreshPolicy`'s current, possibly backed-off interval — see
+    /// `staleMenuOpenThreshold`) is long enough that a real, brief menu
+    /// session never trips it, but short enough that a stuck flag clears
+    /// itself well within a user's next glance at the tray.
+    private var menuOpenSince: Date?
     /// GTK thread only. Set when `render()` is asked to rebuild while
     /// `isMenuOpen` is true; consumed by `menuDidClose()` once the menu
-    /// actually closes.
+    /// actually closes (or by the watchdog in `applyPending()`, if it
+    /// doesn't).
     private var menuNeedsRebuild = false
+    /// Watchdog threshold for `menuOpenSince`; see its doc comment. Not tied
+    /// to the driver's actual poll interval (this class has no reference to
+    /// `UsageRefreshPolicy`) — a fixed multiple of the base interval, chosen
+    /// to be generous rather than exact, since this is a safety valve of
+    /// last resort, not a precisely-timed mechanism.
+    private static let staleMenuOpenThreshold: TimeInterval = 120
 
     public init() {}
 
@@ -145,6 +168,19 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
 
         guard let next, next != shown else { return }
         shown = next
+
+        // Watchdog: we do not trust `isMenuOpen` indefinitely, because we
+        // cannot verify the "hide"/"deactivate" signals `render()` relies on
+        // to clear it ever fire on a real DBusMenu host. If the deferral has
+        // outlasted `staleMenuOpenThreshold`, treat the menu as closed and
+        // let `render()` below rebuild it, rather than deferring forever.
+        // See `menuOpenSince`'s doc comment for the full rationale.
+        if isMenuOpen, let openSince = menuOpenSince,
+           Date().timeIntervalSince(openSince) > Self.staleMenuOpenThreshold {
+            isMenuOpen = false
+            menuOpenSince = nil
+        }
+
         render(next)
     }
 
@@ -225,6 +261,7 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         // — not a crash, not wrong data, just not as fresh as intended.
         connectSignal(UnsafeMutableRawPointer(menu), "show") { [weak self] in
             self?.isMenuOpen = true
+            self?.menuOpenSince = Date()
             self?.handlers?.menuWillOpen()
         }
 
@@ -259,14 +296,44 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     }
 
     /// GTK thread only, via the "hide"/"deactivate" signals connected in
-    /// `render()`. Rebuilds the menu now, using whatever is most recently
-    /// `shown`, if a poll landed (and was deferred by the guard in
-    /// `render()`) while the menu was open.
+    /// `render()`. Clears `isMenuOpen` immediately, then — if a poll landed
+    /// (and was deferred by the guard in `render()`) while the menu was
+    /// open — schedules the deferred rebuild via `g_idle_add` rather than
+    /// calling `render()` directly from here.
+    ///
+    /// That indirection matters: this function runs FROM the old menu's own
+    /// "hide"/"deactivate" handler, i.e. while that signal emission is still
+    /// on the call stack, on the very menu `render()` would need to release
+    /// via `app_indicator_set_menu`. Calling `render()` synchronously here
+    /// would therefore unref the menu (and the `SignalBox` whose closure is
+    /// currently executing) from inside its own emission — structurally the
+    /// same use-after-free class the guard in `render()` exists to remove
+    /// from "show", just relocated to "hide"/"deactivate" instead of
+    /// eliminated. It is plausibly safe in practice (GLib holds its own ref
+    /// on the emitting object across a signal emission, and the menu is
+    /// being dismissed rather than displayed), but relying on that would be
+    /// inconsistent with why the "show" guard exists at all, on a platform
+    /// this review cannot run to check either way. `g_idle_add` schedules
+    /// the rebuild to run once this emission — and the whole call stack
+    /// under it — has fully unwound, closing the class rather than arguing
+    /// it is unlikely. The retain/release pairing mirrors `update()`'s own
+    /// `g_idle_add` use above: `passRetained` here is balanced by
+    /// `takeRetainedValue` in the callback, 1:1.
     private func menuDidClose() {
         isMenuOpen = false
-        guard menuNeedsRebuild, let content = shown else { return }
+        menuOpenSince = nil
+        guard menuNeedsRebuild else { return }
         menuNeedsRebuild = false
-        render(content)
+
+        let box = Unmanaged.passRetained(self).toOpaque()
+        g_idle_add({ raw in
+            guard let raw else { return 0 }
+            let tray = Unmanaged<AppIndicatorTray>.fromOpaque(raw).takeRetainedValue()
+            if let content = tray.shown {
+                tray.render(content)
+            }
+            return 0  // G_SOURCE_REMOVE — one-shot
+        }, box)
     }
 
     private func appendSeparator(to menu: UnsafeMutablePointer<GtkWidget>?) {
