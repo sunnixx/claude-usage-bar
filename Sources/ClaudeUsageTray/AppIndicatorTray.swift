@@ -10,6 +10,18 @@ import Foundation
 ///
 /// GTK is not thread-safe. Every call into GTK below happens on the thread that
 /// called `run`, and `update` reaches it only through `g_idle_add`.
+/// The Swift importer gives every GTK opaque struct (`GtkWidget`, `GtkLabel`,
+/// `GtkMenuShell`, `GtkContainer`, ...) its own distinct pointer type, even
+/// though at the C level they are all just `GtkWidget*` upcasts/downcasts
+/// through the GObject type hierarchy. `OpaquePointer` does not bridge
+/// between them — it is a different family of pointer used for opaque
+/// (non-pointee) C types. Reinterpreting through `UnsafeMutableRawPointer` is
+/// the correct, and only, way to move between these typed pointers.
+private func gcast<In, Out>(_ pointer: UnsafeMutablePointer<In>?) -> UnsafeMutablePointer<Out>? {
+    guard let pointer else { return nil }
+    return UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: Out.self)
+}
+
 public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     private var indicator: UnsafeMutablePointer<AppIndicator>?
     private var handlers: TrayHandlers?
@@ -84,11 +96,11 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
             let markup = "<tt>\(escapeMarkup(MenuModel.monospaceLine(row)))</tt>"
             let item = gtk_menu_item_new()
             let label = gtk_label_new(nil)
-            gtk_label_set_markup(OpaquePointer(label), markup)
-            gtk_label_set_xalign(OpaquePointer(label), 0)
-            gtk_container_add(OpaquePointer(item), label)
+            gtk_label_set_markup(gcast(label), markup)
+            gtk_label_set_xalign(gcast(label), 0)
+            gtk_container_add(gcast(item), label)
             gtk_widget_set_sensitive(item, 0)
-            gtk_menu_shell_append(OpaquePointer(menu), item)
+            gtk_menu_shell_append(gcast(menu), item)
         }
 
         appendSeparator(to: menu)
@@ -112,12 +124,12 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         // and frees the associated Box. So rebuilding the whole menu on every
         // render (once a minute) does not leak a widget per poll; no explicit
         // teardown of the previous menu is needed here.
-        app_indicator_set_menu(indicator, OpaquePointer(menu))
+        app_indicator_set_menu(indicator, gcast(menu))
     }
 
     private func appendSeparator(to menu: UnsafeMutablePointer<GtkWidget>?) {
         let sep = gtk_separator_menu_item_new()
-        gtk_menu_shell_append(OpaquePointer(menu), sep)
+        gtk_menu_shell_append(gcast(menu), sep)
     }
 
     private func appendAction(
@@ -127,7 +139,7 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     ) {
         let item = gtk_menu_item_new_with_label(title)
         connectActivate(item, action)
-        gtk_menu_shell_append(OpaquePointer(menu), item)
+        gtk_menu_shell_append(gcast(menu), item)
     }
 
     private func appendCheck(
@@ -137,9 +149,9 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         action: @escaping () -> Void
     ) {
         let item = gtk_check_menu_item_new_with_label(title)
-        gtk_check_menu_item_set_active(OpaquePointer(item), checked ? 1 : 0)
+        gtk_check_menu_item_set_active(gcast(item), checked ? 1 : 0)
         connectActivate(item, action)
-        gtk_menu_shell_append(OpaquePointer(menu), item)
+        gtk_menu_shell_append(gcast(menu), item)
     }
 
     /// Bridges a Swift closure to a GTK signal. The box is freed by the
@@ -152,7 +164,7 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         let box = Unmanaged.passRetained(Box(action)).toOpaque()
 
         g_signal_connect_data(
-            OpaquePointer(item),
+            UnsafeMutableRawPointer(item),
             "activate",
             unsafeBitCast(
                 { (_: UnsafeMutableRawPointer?, data: UnsafeMutableRawPointer?) in
