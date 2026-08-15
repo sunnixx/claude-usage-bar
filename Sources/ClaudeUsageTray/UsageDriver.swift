@@ -33,6 +33,28 @@ public final class UsageDriver: @unchecked Sendable {
     /// due-time comparisons are deterministic instead of racing real time.
     private let now: @Sendable () -> Date
 
+    /// How soon `pollTick()` retries a provider it found due but skipped
+    /// because a fetch was already in flight for it (e.g. a slow "Refresh
+    /// Now" still running against a struggling endpoint). Without this, a
+    /// skipped provider's `nextDue` stays in the past, `timeUntilNextWake()`
+    /// keeps returning ~0, and the poll loop spins continuously until the
+    /// in-flight fetch finishes. A few seconds is long enough to stop the
+    /// spin but short enough that the provider is re-attempted promptly once
+    /// the in-flight fetch clears.
+    /// Internal rather than private so `DueGatingTests` can assert the
+    /// skip-path bump lands strictly above the `minimumWakeInterval` floor —
+    /// distinguishing "the bump happened" from "the floor alone happened to
+    /// cover for it". Not part of the type's public API.
+    static let inFlightRetryInterval: TimeInterval = 5
+    /// The floor `timeUntilNextWake()` never sleeps below, regardless of what
+    /// the due times say. Defence in depth alongside the skip-path bump
+    /// above: even a future bug that leaves some `nextDue` in the past can't
+    /// turn the poll loop into a zero-sleep spin.
+    /// Internal rather than private — see `inFlightRetryInterval`'s doc
+    /// comment; tests need this value to assert against, not just a bare
+    /// zero check.
+    static let minimumWakeInterval: TimeInterval = 1
+
     /// Guards the publish decision and the `tray.update` call as a single
     /// atomic unit — separate from `lock`, which guards `policies`/`fetching`
     /// and is taken and released many times per fetch. Two concurrent
@@ -122,18 +144,23 @@ public final class UsageDriver: @unchecked Sendable {
     }
 
     /// What `start()`'s poll loop actually sleeps for between ticks: the
-    /// smallest remaining time until any provider becomes due, clamped at
-    /// zero. This is what decouples "how often the loop wakes" from "which
-    /// providers it fetches" — the loop can wake early for an eager provider
-    /// without that forcing a backed-off provider to be fetched too; that
-    /// decision is `pollTick()`'s due check.
-    private func timeUntilNextWake() -> TimeInterval {
+    /// smallest remaining time until any provider becomes due, floored at
+    /// `minimumWakeInterval` so no due-time bookkeeping bug can ever turn
+    /// this into a zero-sleep spin. This is what decouples "how often the
+    /// loop wakes" from "which providers it fetches" — the loop can wake
+    /// early for an eager provider without that forcing a backed-off
+    /// provider to be fetched too; that decision is `pollTick()`'s due check.
+    ///
+    /// Internal, not private — `@testable import` reaches this so tests can
+    /// assert the floor holds even when every provider is overdue.
+    func timeUntilNextWake() -> TimeInterval {
         withLock {
             let now = self.now()
             let remaining = clients.map { provider, _ in
                 max(0, (nextDue[provider] ?? .distantPast).timeIntervalSince(now))
             }
-            return remaining.min() ?? UsageRefreshPolicy.baseInterval
+            let soonest = remaining.min() ?? UsageRefreshPolicy.baseInterval
+            return max(soonest, Self.minimumWakeInterval)
         }
     }
 
@@ -195,16 +222,24 @@ public final class UsageDriver: @unchecked Sendable {
 
     /// At most one fetch is ever in flight per provider, whether triggered by
     /// the poll loop, "Refresh Now", or opening the menu. If one is already
-    /// running for this provider, this is a no-op; a different provider may
-    /// still fetch concurrently. Always bumps that provider's `nextDue` to
-    /// `now() + policy.interval` afterwards, whatever triggered it — a manual
-    /// refresh pushes out the next scheduled poll for that provider too, so
-    /// one doesn't land redundantly right on top of the other.
+    /// running for this provider, this is a no-op — except that it still
+    /// pushes `nextDue` out by `inFlightRetryInterval`, so a provider skipped
+    /// here isn't left permanently "overdue" (which would otherwise spin the
+    /// poll loop hot until the in-flight fetch finishes; see
+    /// `inFlightRetryInterval`'s doc comment). A different provider may still
+    /// fetch concurrently. On an actual fetch, always bumps that provider's
+    /// `nextDue` to `now() + policy.interval` afterwards, whatever triggered
+    /// it — a manual refresh pushes out the next scheduled poll for that
+    /// provider too, so one doesn't land redundantly right on top of the
+    /// other.
     func refresh(_ provider: Provider) async {
         guard let client = clients.first(where: { $0.0 == provider })?.1 else { return }
 
         let shouldFetch = withLock {
-            if fetching.contains(provider) { return false }
+            if fetching.contains(provider) {
+                nextDue[provider] = now().addingTimeInterval(Self.inFlightRetryInterval)
+                return false
+            }
             fetching.insert(provider)
             return true
         }

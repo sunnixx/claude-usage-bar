@@ -172,4 +172,70 @@ private actor GatedSucceedingClient: UsageFetching {
         // in `clients` order) — nothing left dangling.
         #expect(await anthropicClient.callCount == 1)
     }
+
+    /// A provider found due but skipped because its own fetch is already in
+    /// flight (e.g. a slow "Refresh Now" against a struggling endpoint) must
+    /// not be left "overdue" — otherwise `timeUntilNextWake()` keeps
+    /// returning ~0 and `start()`'s loop spins hot until that fetch finishes.
+    /// Deleting the `nextDue` bump on the in-flight-skip path in
+    /// `refresh(_:)` (leaving the guard a plain early return) makes this
+    /// assertion fail: `timeUntilNextWake()` would report 0, not a positive
+    /// retry delay.
+    @Test func pollTickSkipPathLeavesTheNextWakeStrictlyPositive() async {
+        let clock = MutableClock(Date(timeIntervalSince1970: 0))
+        let codexClient = GatedSucceedingClient(.codex)
+        let driver = UsageDriver(
+            tray: RecordingTray(),
+            clients: [(.codex, codexClient)],
+            loginItem: StubLogin(),
+            now: { clock.now }
+        )
+
+        // Start a fetch that never completes until released — standing in
+        // for a slow request still running against a struggling endpoint.
+        async let inFlight: Void = driver.refresh(.codex)
+        await codexClient.waitUntilGated()
+
+        // A poll tick lands while that fetch is still running. Codex has no
+        // recorded `nextDue` yet (it has never completed a refresh), so
+        // `pollTick()` considers it due, calls `refresh(.codex)`, and must
+        // hit the in-flight guard rather than starting a second fetch.
+        await driver.pollTick()
+        #expect(await codexClient.callCount == 1, "the single-in-flight guard must still hold")
+
+        // Strictly greater than the floor, not merely non-zero: the
+        // `minimumWakeInterval` floor alone would already make a bare `> 0`
+        // check pass even with the skip-path bump deleted, silently hiding
+        // the regression this test exists to catch.
+        #expect(driver.timeUntilNextWake() > UsageDriver.minimumWakeInterval)
+
+        await codexClient.release()
+        await inFlight
+    }
+
+    /// Defence in depth: whatever the recorded due times say — including the
+    /// "never refreshed yet" default, which treats every provider as overdue
+    /// — the poll loop must never be told to sleep for zero seconds.
+    @Test func timeUntilNextWakeNeverReturnsZeroEvenWhenEveryProviderIsOverdue() async {
+        let clock = MutableClock(Date(timeIntervalSince1970: 0))
+        let driver = UsageDriver(
+            tray: RecordingTray(),
+            clients: [
+                (.anthropic, CountingSucceedingClient(.anthropic)),
+                (.codex, CountingFailingClient()),
+            ],
+            loginItem: StubLogin(),
+            now: { clock.now }
+        )
+
+        // No refresh has ever happened: both providers are "overdue" by
+        // `nextDue`'s documented default (absent == due arbitrarily far in
+        // the past).
+        #expect(driver.timeUntilNextWake() > 0)
+
+        // Advancing the clock can only make every provider "more" overdue —
+        // still must never surface as a zero sleep.
+        clock.advance(by: 10_000)
+        #expect(driver.timeUntilNextWake() > 0)
+    }
 }
