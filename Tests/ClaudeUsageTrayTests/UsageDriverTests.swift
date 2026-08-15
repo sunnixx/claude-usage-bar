@@ -161,24 +161,45 @@ private func sampleSnapshot() throws -> UsageSnapshot {
     }
 
     /// Only user-initiated refresh resets the backoff. Repeated poll-style
-    /// failures must back off monotonically; `refreshNow()` — what "Refresh
-    /// Now" and menu-open call — must reset to the base interval, and it must
-    /// do so synchronously (before its own resulting fetch can complete),
-    /// never as a side effect of the poll loop itself.
+    /// failures must back off by exactly the policy's doubling schedule —
+    /// captured after each one, not just checked once at the end, so that a
+    /// spurious reset anywhere in the loop (e.g. `forceRefreshRequested()`
+    /// mistakenly called from `refresh()` or the poll body instead of only
+    /// from a user-initiated path) changes the observed sequence and fails
+    /// the test, rather than being masked by the interval still ending up
+    /// somewhere above the base. `refreshNow()` — what "Refresh Now" and
+    /// menu-open call — must then reset it back to the base interval, and do
+    /// so synchronously (before its own resulting fetch can complete), never
+    /// as a side effect of the poll loop itself.
+    ///
+    /// This drives `refresh()` directly rather than `start()`'s real poll
+    /// loop: `start()` waits on `Task.sleep(for: .seconds(currentInterval))`
+    /// between iterations, and nothing in `UsageDriver` lets a test replace
+    /// that clock, so exercising the loop itself deterministically — without
+    /// a real wait of up to 300s per iteration — isn't possible without
+    /// adding a clock/sleep seam to production code, which is out of scope
+    /// here. What this test does cover is the exact method `start()`'s loop
+    /// calls on every iteration (`refresh()`), and that it never resets
+    /// backoff; `start()`'s own loop plumbing (sleep, then call `refresh()`
+    /// again) is not separately exercised.
     @Test func onlyUserInitiatedRefreshResetsTheBackoff() async throws {
         let gated = GatedClient()
         let driver = UsageDriver(tray: SpyTray(), client: gated, loginItem: StubLoginItem())
         let base = await driver.currentInterval
+        #expect(base == UsageRefreshPolicy.baseInterval)
 
-        // Three poll-loop-style failures: interval must grow, never reset.
+        // Three poll-loop-style failures: capture the interval after each one.
+        var observed: [TimeInterval] = []
         for _ in 0..<3 {
             async let r: Void = driver.refresh()
             await gated.waitUntilGated()
             await gated.release(with: .failure(UsageError.transport))
             await r
+            observed.append(await driver.currentInterval)
         }
-        let backedOff = await driver.currentInterval
-        #expect(backedOff > base)
+        // 60 -> 120 -> 240 -> 300 (the policy's max), doubling each time with
+        // no reset in between.
+        #expect(observed == [120, 240, 300])
 
         // `refreshNow()` resets `policy.interval` synchronously, before the
         // detached task it spawns can touch the client — the client is still

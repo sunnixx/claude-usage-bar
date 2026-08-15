@@ -15,9 +15,21 @@ public final class UsageDriver: @unchecked Sendable {
     private let lock = NSLock()
     private var policy = UsageRefreshPolicy()
     private var isFetching = false
-    /// The last `UsageState` actually handed to the tray. Compared against the
-    /// current state on every non-forced publish so a poll that produces no
-    /// change doesn't rebuild the tray under the user's cursor.
+
+    /// Guards the publish decision and the `tray.update` call as a single
+    /// atomic unit — separate from `lock`, which guards `policy`/`isFetching`
+    /// and is taken and released many times per fetch. Two concurrent
+    /// `publish()` calls (e.g. a `refresh()` completion racing a menu-open) must
+    /// not be able to interleave: without this, the newer state could win the
+    /// race to update `lastPublishedState` while the older state's `tray.update`
+    /// call lands after it, leaving the tray showing stale content that a
+    /// subsequent equal-state publish would then wrongly suppress. Always
+    /// acquired before `lock` when both are needed (`publish()` reads
+    /// `policy.state` via `withLock` while holding `publishLock`), never the
+    /// reverse, so the two locks can't deadlock against each other.
+    private let publishLock = NSLock()
+    /// The last `UsageState` actually handed to the tray. Guarded by
+    /// `publishLock`, not `lock` — see above.
     private var lastPublishedState: UsageState?
 
     public init(tray: any TrayBackend, client: any UsageFetching, loginItem: any LoginItemControlling) {
@@ -120,16 +132,21 @@ public final class UsageDriver: @unchecked Sendable {
     /// something the tray displays changed without `policy.state` changing:
     /// the menu is about to be drawn (relative reset times must be current)
     /// or the login-item flag was just toggled.
+    ///
+    /// The dedupe check and the `tray.update` call are one atomic step under
+    /// `publishLock`, so concurrent publishes can never reach `tray.update`
+    /// out of order — see `publishLock`'s doc comment. This relies on
+    /// `TrayBackend.update` being non-blocking and non-reentrant, per its
+    /// contract.
     private func publish(force: Bool = false) {
-        let (state, shouldPublish) = withLock { () -> (UsageState, Bool) in
-            let state = policy.state
-            if !force, let last = lastPublishedState, last == state {
-                return (state, false)
-            }
-            lastPublishedState = state
-            return (state, true)
+        publishLock.lock()
+        defer { publishLock.unlock() }
+
+        let state = withLock { policy.state }
+        if !force, let last = lastPublishedState, last == state {
+            return
         }
-        guard shouldPublish else { return }
+        lastPublishedState = state
 
         tray.update(TrayContent(
             title: MenuModel.statusTitle(for: state),

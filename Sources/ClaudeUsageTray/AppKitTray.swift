@@ -43,7 +43,17 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
         lock.lock()
         pending = content
         lock.unlock()
-        DispatchQueue.main.async { [weak self] in self?.drainPending() }
+        // Drain inline when already on the main thread — notably when this is
+        // called synchronously from `menuWillOpen`, via the driver's forced
+        // publish. Deferring with `DispatchQueue.main.async` in that case
+        // would land the rebuild after AppKit has already populated and drawn
+        // the menu, which is the stale-menu-on-open bug this exists to avoid.
+        // Off the main thread (the poll task), keep hopping over as before.
+        if Thread.isMainThread {
+            drainPending()
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.drainPending() }
+        }
     }
 
     // MARK: - Main thread only
