@@ -219,17 +219,17 @@ import Testing
         let fetched = snapshot(percent: 37, at: 100)
         policy.record(success: fetched)
 
-        policy.record(failure: .keychainUnavailable)
+        policy.record(failure: .tokenStoreUnavailable)
 
         #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
     }
 
-    @Test func reportsKeychainDeniedWhenNothingHasEverSucceeded() {
+    @Test func reportsTokenStoreUnavailableWhenNothingHasEverSucceeded() {
         var policy = UsageRefreshPolicy()
 
-        policy.record(failure: .keychainUnavailable)
+        policy.record(failure: .tokenStoreUnavailable)
 
-        #expect(policy.state == .keychainDenied)
+        #expect(policy.state == .tokenStoreUnavailable)
     }
 
     @Test func forceRefreshResetsTheIntervalWithoutTouchingState() {

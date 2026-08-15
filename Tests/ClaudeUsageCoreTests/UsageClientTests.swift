@@ -2,8 +2,14 @@ import Foundation
 import Testing
 @testable import ClaudeUsageCore
 
+// URLRequest/HTTPURLResponse live in Foundation on Apple platforms and in
+// FoundationNetworking on Linux and Windows.
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 private struct StubTokens: TokenProviding {
-    let result: Result<TokenLookup, KeychainError>
+    let result: Result<TokenLookup, TokenStoreError>
 
     static let valid = StubTokens(result: .success(.token("sk-ant-oat01-test")))
     static let missing = StubTokens(result: .success(.missing))
@@ -60,7 +66,20 @@ private func respond(_ status: Int, _ body: Data) -> UsageClient.Transport {
         #expect(request.url?.absoluteString == "https://api.anthropic.com/api/oauth/usage")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk-ant-oat01-test")
         #expect(request.value(forHTTPHeaderField: "anthropic-beta") == "oauth-2025-04-20")
-        #expect(request.value(forHTTPHeaderField: "User-Agent") == "claude-usage-bar/1.0 (macOS)")
+        // Pinned per-platform, not compared against UsageClient.userAgent
+        // itself: that would be tautological (it would still pass if the
+        // constant were "" or "junk") and would stop pinning what the header
+        // actually says. UsageClient.userAgent reports whichever platform
+        // this test is actually running on (F6 — it used to always say
+        // "macOS", even on Linux and Windows), so the expectation must too.
+        #if os(macOS)
+        let expected = "claude-usage-bar/1.0 (macOS)"
+        #elseif os(Linux)
+        let expected = "claude-usage-bar/1.0 (Linux)"
+        #elseif os(Windows)
+        let expected = "claude-usage-bar/1.0 (Windows)"
+        #endif
+        #expect(request.value(forHTTPHeaderField: "User-Agent") == expected)
     }
 
     @Test func reportsAMissingToken() async throws {
@@ -69,8 +88,8 @@ private func respond(_ status: Int, _ body: Data) -> UsageClient.Transport {
         }
     }
 
-    @Test func treatsAThrownKeychainErrorAsUnavailableNotNoToken() async throws {
-        await #expect(throws: UsageError.keychainUnavailable) {
+    @Test func treatsAThrownTokenStoreErrorAsUnavailableNotNoToken() async throws {
+        await #expect(throws: UsageError.tokenStoreUnavailable) {
             try await client(tokens: StubTokens.broken, transport: respond(200, Data())).fetchUsage()
         }
     }

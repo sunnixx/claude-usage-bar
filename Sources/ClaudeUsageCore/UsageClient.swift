@@ -1,15 +1,22 @@
 import Foundation
 
+// URLSession lives in Foundation on Apple platforms and in FoundationNetworking
+// on Linux and Windows.
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 public enum UsageError: Error, Equatable {
     case noToken
     case unauthorized
     case transport
     case badStatus(Int)
     case decoding
-    /// Keychain lookup threw (denied prompt, locked keychain, corrupt item) —
-    /// distinct from `.noToken`, which means the lookup succeeded and found
-    /// nothing. Treated as transient so a good value is never blanked.
-    case keychainUnavailable
+    /// The token store threw (denied prompt, locked keychain, unreadable or
+    /// malformed credentials file) — distinct from `.noToken`, which means the
+    /// lookup succeeded and found nothing. Treated as transient so a good value
+    /// is never blanked.
+    case tokenStoreUnavailable
 }
 
 public protocol UsageFetching: Sendable {
@@ -20,7 +27,19 @@ public struct UsageClient: UsageFetching {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 
     public static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-    public static let userAgent = "claude-usage-bar/1.0 (macOS)"
+    public static let userAgent = "claude-usage-bar/1.0 (\(platformName))"
+
+    private static var platformName: String {
+        #if os(macOS)
+        return "macOS"
+        #elseif os(Linux)
+        return "Linux"
+        #elseif os(Windows)
+        return "Windows"
+        #else
+        return "unknown"
+        #endif
+    }
 
     public static let urlSessionTransport: Transport = { request in
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -47,7 +66,7 @@ public struct UsageClient: UsageFetching {
         do {
             lookup = try tokens.accessToken()
         } catch {
-            throw UsageError.keychainUnavailable
+            throw UsageError.tokenStoreUnavailable
         }
 
         guard case .token(let token) = lookup else {

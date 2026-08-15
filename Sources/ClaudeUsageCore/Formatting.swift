@@ -1,7 +1,23 @@
 import Foundation
 
+/// How close a usage window is to its limit. Drives colour in the surfaces
+/// that can render it; `Formatting.isCritical` still drives the menu bar
+/// title, and `critical` here is defined to agree with it.
+public enum Severity: Equatable, Sendable {
+    case normal
+    case warning
+    case critical
+}
+
 public enum Formatting {
     public static let criticalThreshold = 90
+    public static let warningThreshold = 75
+
+    public static func severity(for percent: Int) -> Severity {
+        if percent >= criticalThreshold { return .critical }
+        if percent >= warningThreshold { return .warning }
+        return .normal
+    }
 
     public static func percentText(_ percent: Int?) -> String {
         guard let percent else { return "—" }

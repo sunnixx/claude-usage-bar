@@ -28,7 +28,7 @@ import Testing
 
     private func rows(_ state: UsageState, now: Date) -> [String] {
         MenuModel.rows(for: state, now: now, calendar: calendar, locale: locale, timeZone: utc)
-            .map(\.text)
+            .map(MenuModel.monospaceLine)
     }
 
     // MARK: statusTitle
@@ -51,7 +51,7 @@ import Testing
         #expect(MenuModel.statusTitle(for: .loaded(snapshot)).isCritical == true)
     }
 
-    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .keychainDenied])
+    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .tokenStoreUnavailable])
     func showsADashWhenThereIsNoValue(state: UsageState) {
         let title = MenuModel.statusTitle(for: state)
 
@@ -66,7 +66,7 @@ import Testing
         #expect(title.text == "37%")
     }
 
-    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .keychainDenied])
+    @Test(arguments: [UsageState.loading, .noToken, .unauthorized, .unreachable, .tokenStoreUnavailable])
     func isStaleIsFalseForNonStaleStates(state: UsageState) {
         #expect(MenuModel.statusTitle(for: state).isStale == false)
     }
@@ -134,6 +134,145 @@ import Testing
         #expect(rows(.noToken, now: now) == ["Not signed in to Claude Code"])
         #expect(rows(.unauthorized, now: now) == ["Token expired — open Claude Code to refresh"])
         #expect(rows(.unreachable, now: now) == ["Can't reach Anthropic"])
-        #expect(rows(.keychainDenied, now: now) == ["Keychain access denied — allow in Keychain Access"])
+        #if os(macOS)
+        #expect(rows(.tokenStoreUnavailable, now: now) == ["Keychain access denied — allow in Keychain Access"])
+        #else
+        #expect(rows(.tokenStoreUnavailable, now: now) == ["Can't read Claude Code credentials"])
+        #endif
+    }
+
+    // MARK: structured rows
+
+    @Test func buildsStructuredRowsForASnapshot() throws {
+        let rows = MenuModel.rows(
+            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+
+        let session = try #require(rows.first)
+        #expect(session.label == "Session (5h)")
+        #expect(session.percent == 37)
+        #expect(session.bar == "\u{2593}\u{2593}\u{2593}\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}")
+        #expect(session.isIndented == false)
+    }
+
+    @Test func marksScopedRowsAsIndented() throws {
+        let rows = MenuModel.rows(
+            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        let scoped = try #require(rows.first { $0.isIndented })
+        #expect(scoped.label == "Fable")
+        #expect(scoped.percent == 10)
+    }
+
+    @Test func messageRowsCarryOnlyALabel() throws {
+        let rows = MenuModel.rows(
+            for: .noToken, now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        let row = try #require(rows.first)
+        #expect(row.label == "Not signed in to Claude Code")
+        #expect(row.percent == nil)
+        #expect(row.bar == nil)
+        #expect(row.reset == nil)
+    }
+
+    @Test func composesAMonospaceLineWithAlignedColumns() {
+        let plain = MenuRow(label: "This week", percent: 26,
+                            bar: "\u{2593}\u{2593}\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}", reset: "resets Sat, Aug 8")
+        let indented = MenuRow(label: "Fable", percent: 10,
+                               bar: "\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}", reset: nil, isIndented: true)
+
+        let a = MenuModel.monospaceLine(plain)
+        let b = MenuModel.monospaceLine(indented)
+
+        // The percent sign and the bar must sit at the same index on both rows --
+        // the indent is absorbed by the label field, not prepended afterwards.
+        #expect(a.distance(from: a.startIndex, to: a.firstIndex(of: "%")!) == 17)
+        #expect(b.distance(from: b.startIndex, to: b.firstIndex(of: "%")!) == 17)
+        #expect(a.distance(from: a.startIndex, to: a.firstIndex(of: "\u{2593}")!) == 20)
+        #expect(b.distance(from: b.startIndex, to: b.firstIndex(of: "\u{2593}")!) == 20)
+    }
+
+    @Test func statusTitleCarriesTheRawPercent() throws {
+        let title = MenuModel.statusTitle(for: .loaded(try loadedSnapshot()))
+        #expect(title.percent == 37)
+        // The gauge glyph is the status item's template image, not part of this
+        // string -- do not add it here.
+        #expect(title.text == "37%")
+    }
+
+    @Test func statusTitlePercentIsNilWithoutAValue() {
+        #expect(MenuModel.statusTitle(for: .noToken).percent == nil)
+    }
+}
+
+// MARK: - Severity and scope-reset de-duplication
+
+extension MenuModelTests {
+    private func snapshot(
+        sessionPercent: Int,
+        weekPercent: Int,
+        scopeResetsAt: Date?
+    ) throws -> UsageSnapshot {
+        UsageSnapshot(
+            session: UsageWindow(percent: sessionPercent, resetsAt: try date("2026-08-04T09:00:00Z")),
+            week: UsageWindow(percent: weekPercent, resetsAt: try date("2026-08-08T07:00:00Z")),
+            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: scopeResetsAt)],
+            fetchedAt: try date("2026-08-04T07:48:00Z")
+        )
+    }
+
+    private func builtRows(_ snapshot: UsageSnapshot) throws -> [MenuRow] {
+        MenuModel.rows(
+            for: .loaded(snapshot), now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+    }
+
+    @Test func rowsCarryTheirSeverity() throws {
+        let rows = try builtRows(try snapshot(sessionPercent: 92, weekPercent: 80, scopeResetsAt: nil))
+
+        #expect(rows[0].severity == .critical)   // session 92
+        #expect(rows[1].severity == .warning)    // week 80
+        #expect(rows[2].severity == .normal)     // Fable 10
+    }
+
+    @Test func omitsAScopeResetThatRepeatsTheWeeklyOne() throws {
+        // Fable resets at the same instant as the weekly window, so repeating
+        // the date on both rows is noise.
+        let shared = try date("2026-08-08T07:00:00Z")
+        let rows = try builtRows(try snapshot(sessionPercent: 37, weekPercent: 26, scopeResetsAt: shared))
+
+        let scope = try #require(rows.first { $0.isIndented })
+        #expect(scope.reset == nil)
+        #expect(rows[1].reset != nil, "the weekly row must still show it")
+    }
+
+    @Test func keepsAScopeResetThatDiffersFromTheWeeklyOne() throws {
+        let rows = try builtRows(
+            try snapshot(
+                sessionPercent: 37, weekPercent: 26,
+                scopeResetsAt: try date("2026-08-09T07:00:00Z")
+            )
+        )
+
+        let scope = try #require(rows.first { $0.isIndented })
+        #expect(scope.reset != nil)
+    }
+
+    @Test func keepsAScopeResetWhenThereIsNoWeeklyWindow() throws {
+        let noWeek = UsageSnapshot(
+            session: UsageWindow(percent: 37, resetsAt: try date("2026-08-04T09:00:00Z")),
+            week: nil,
+            scopedWeekly: [
+                ScopedWindow(label: "Fable", percent: 10, resetsAt: try date("2026-08-08T07:00:00Z"))
+            ],
+            fetchedAt: try date("2026-08-04T07:48:00Z")
+        )
+
+        let scope = try #require(try builtRows(noWeek).first { $0.isIndented })
+        #expect(scope.reset != nil)
     }
 }

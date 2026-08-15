@@ -128,3 +128,37 @@ import Testing
         #expect(Formatting.clockTime(moment, locale: locale, timeZone: utc) == "12:04")
     }
 }
+
+// MARK: - Severity
+
+extension FormattingTests {
+    @Test(arguments: [0, 1, 50, 74])
+    func treatsUsageBelowSeventyFiveAsNormal(percent: Int) {
+        #expect(Formatting.severity(for: percent) == .normal)
+    }
+
+    @Test(arguments: [75, 80, 89])
+    func treatsUsageFromSeventyFiveAsWarning(percent: Int) {
+        #expect(Formatting.severity(for: percent) == .warning)
+    }
+
+    @Test(arguments: [90, 99, 100, 140])
+    func treatsUsageFromNinetyAsCritical(percent: Int) {
+        #expect(Formatting.severity(for: percent) == .critical)
+    }
+
+    @Test func severityBoundariesAreExact() {
+        // The thresholds are the whole point — pin both edges.
+        #expect(Formatting.severity(for: 74) == .normal)
+        #expect(Formatting.severity(for: 75) == .warning)
+        #expect(Formatting.severity(for: 89) == .warning)
+        #expect(Formatting.severity(for: 90) == .critical)
+    }
+
+    @Test func criticalSeverityAgreesWithIsCritical() {
+        // isCritical still drives the menu bar title colour; the two must not drift.
+        for percent in [0, 74, 75, 89, 90, 100] {
+            #expect((Formatting.severity(for: percent) == .critical) == Formatting.isCritical(percent))
+        }
+    }
+}
