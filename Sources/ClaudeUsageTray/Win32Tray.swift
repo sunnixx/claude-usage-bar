@@ -27,11 +27,14 @@ private let wsExToolWindow: DWORD = 0x0000_0080
 /// destroyed when that happens; `NIM_ADD` is never reissued automatically.
 /// The documented way to recover is to register this well-known message at
 /// startup and re-add the icon whenever it arrives. `RegisterWindowMessageW`
-/// returns a plain `UINT`, not a pointer, so unlike `hwndMessage()` above it
-/// is fine as ordinary global state under Swift 6 concurrency checking.
+/// returns a plain `UINT`, not a pointer, so — unlike the `HWND` fields below,
+/// which need `lock` — it is fine as ordinary global state under Swift 6
+/// concurrency checking.
 private let kTaskbarCreatedMessage: UINT = RegisterWindowMessageW("TaskbarCreated".wide)
 
-/// Windows tray via Shell_NotifyIcon on a message-only window.
+/// Windows tray via Shell_NotifyIcon on a real (but never shown) top-level
+/// window — see the comment on window creation in `run` for why it is not a
+/// message-only (`HWND_MESSAGE`) window.
 ///
 /// Win32 UI objects belong to the thread that created them, so every call below
 /// happens on the thread that called `run`; `update` reaches it by PostMessage.
@@ -79,8 +82,9 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
 
     /// Guarded by `lock`; written from any thread via `update`.
     private var pending: TrayContent?
-    /// UI thread only: never read or written off the thread that runs the
-    /// message loop, so it needs no lock of its own.
+    /// UI thread only: every read and write — including in `showMenu`, which
+    /// runs on this same thread via `dispatch` — happens there, so it needs
+    /// no lock of its own.
     private var shown: TrayContent?
     /// UI thread only. True when `shown` has changed since the icon/tooltip
     /// were last actually rendered via `Shell_NotifyIconW`. Split from
@@ -142,7 +146,7 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         // exit instead of leaving that undiagnosable.
         guard let created else {
             FileHandle.standardError.write(Data(
-                "claude-usage-bar: CreateWindowExW failed — could not create the tray's message-only window.\n".utf8
+                "claude-usage-bar: CreateWindowExW failed — could not create the tray's hidden window.\n".utf8
             ))
             exit(1)
         }
@@ -330,9 +334,7 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     }
 
     private func showMenu() {
-        lock.lock()
         let content = shown
-        lock.unlock()
         guard let content, let window, let menu = CreatePopupMenu() else { return }
         defer { _ = DestroyMenu(menu) }
 
@@ -373,14 +375,9 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         _ = PostMessageW(window, UINT(WM_NULL), 0, 0)
     }
 
-    /// Windows lays the fields out for a proportional font rather than using
-    /// `MenuModel.monospaceLine`, which is built for a fixed-width menu.
-    static func line(_ row: MenuRow) -> String {
-        var parts: [String] = [row.isIndented ? "    \(row.label)" : row.label]
-        if let percent = row.percent { parts.append("\(percent)%") }
-        if let reset = row.reset { parts.append(reset) }
-        return parts.joined(separator: "   ")
-    }
+    /// See `Win32MenuLine` for why this composition lives in its own
+    /// platform-independent type rather than here.
+    static func line(_ row: MenuRow) -> String { Win32MenuLine.compose(row) }
 
     private func notifyData() -> NOTIFYICONDATAW {
         var data = NOTIFYICONDATAW()

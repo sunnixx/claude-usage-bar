@@ -31,6 +31,15 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     private var pending: TrayContent?
     private var shown: TrayContent?
 
+    /// GTK thread only. True between the menu's "show" and "hide" signals —
+    /// i.e. while it is actually open on screen. Guards `render()` against
+    /// swapping the `GtkMenu` out from under itself; see the guard there.
+    private var isMenuOpen = false
+    /// GTK thread only. Set when `render()` is asked to rebuild while
+    /// `isMenuOpen` is true; consumed by `menuDidClose()` once the menu
+    /// actually closes.
+    private var menuNeedsRebuild = false
+
     public init() {}
 
     /// The thread that calls `run` and drives `gtk_main()`. Recorded so
@@ -144,6 +153,25 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         // fixed themed glyph.
         app_indicator_set_label(indicator, content.title.text, "100%")
 
+        // Never swap the menu out from under the user while it is open. The
+        // "show" handler connected below fires INSIDE the very signal
+        // emission that put the menu on screen, synchronously, on this same
+        // thread — menuWillOpen() -> driver.publish(force:) -> update() ->
+        // applyPending() -> render(), all still on the call stack when
+        // "show" runs. Reaching app_indicator_set_menu from there would
+        // release the menu (and the SignalBox whose closure is currently
+        // executing) that GTK is still using to display the open dropdown —
+        // a use-after-free, not merely the "grab risk" this was once
+        // recorded as. Deferring the rebuild instead means the dropdown
+        // rows can be up to one poll interval stale while the menu is open
+        // — accepted deliberately, in exchange for removing a crash class
+        // on a platform nobody running this review can test by hand.
+        guard !isMenuOpen else {
+            menuNeedsRebuild = true
+            return
+        }
+        menuNeedsRebuild = false
+
         let menu = gtk_menu_new()
 
         for row in content.rows {
@@ -196,7 +224,22 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         // fire, refresh-on-open silently degrades to poll-interval staleness
         // — not a crash, not wrong data, just not as fresh as intended.
         connectSignal(UnsafeMutableRawPointer(menu), "show") { [weak self] in
+            self?.isMenuOpen = true
             self?.handlers?.menuWillOpen()
+        }
+
+        // Both "hide" (fired when the popup is dismissed, e.g. by clicking
+        // elsewhere or selecting an item) and "deactivate" (GtkMenuShell's
+        // own signal for the same moment) are connected: whichever the
+        // real DBusMenu host actually fires — see the UNVERIFIED note on
+        // "show" above, the same uncertainty applies here — this clears
+        // `isMenuOpen` and, if a poll landed while the menu was open,
+        // performs the deferred rebuild now that it is safe.
+        connectSignal(UnsafeMutableRawPointer(menu), "hide") { [weak self] in
+            self?.menuDidClose()
+        }
+        connectSignal(UnsafeMutableRawPointer(menu), "deactivate") { [weak self] in
+            self?.menuDidClose()
         }
 
         // app_indicator_set_menu releases the previous menu (g_object_unref)
@@ -213,6 +256,17 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         // replaced, which is a second library's ownership behavior this
         // review did not read — see the report's UNVERIFIED list.
         app_indicator_set_menu(indicator, gcast(menu))
+    }
+
+    /// GTK thread only, via the "hide"/"deactivate" signals connected in
+    /// `render()`. Rebuilds the menu now, using whatever is most recently
+    /// `shown`, if a poll landed (and was deferred by the guard in
+    /// `render()`) while the menu was open.
+    private func menuDidClose() {
+        isMenuOpen = false
+        guard menuNeedsRebuild, let content = shown else { return }
+        menuNeedsRebuild = false
+        render(content)
     }
 
     private func appendSeparator(to menu: UnsafeMutablePointer<GtkWidget>?) {

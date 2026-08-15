@@ -27,7 +27,19 @@ public struct UsageClient: UsageFetching {
     public typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 
     public static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-    public static let userAgent = "claude-usage-bar/1.0 (macOS)"
+    public static let userAgent = "claude-usage-bar/1.0 (\(platformName))"
+
+    private static var platformName: String {
+        #if os(macOS)
+        return "macOS"
+        #elseif os(Linux)
+        return "Linux"
+        #elseif os(Windows)
+        return "Windows"
+        #else
+        return "unknown"
+        #endif
+    }
 
     public static let urlSessionTransport: Transport = { request in
         let (data, response) = try await URLSession.shared.data(for: request)

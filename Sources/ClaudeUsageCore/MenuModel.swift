@@ -32,7 +32,9 @@ public struct MenuRow: Equatable, Sendable {
     }
 }
 
-/// Turns poller state into the exact strings both AppKit surfaces display.
+/// Turns poller state into the exact strings the macOS and Linux tray
+/// surfaces display (Windows composes its own line — see `Win32Tray.line`
+/// — because Win32 menus use a proportional font, not a monospaced one).
 public enum MenuModel {
     private static let labelWidth = 14
     private static let percentWidth = 4

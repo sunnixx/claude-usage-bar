@@ -59,6 +59,15 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
     // MARK: - Main thread only
 
     private func drainPending() {
+        // `driver.start()` (in main.swift) publishes synchronously before
+        // `run()` installs `statusItem`, so `update` can call this before
+        // there is anywhere to draw. Bail without consuming `pending` in
+        // that case, so the content survives for `run()`'s own drain call
+        // once `statusItem` exists — otherwise it is read and discarded here
+        // (renderTitle/renderMenu both bail on `statusItem == nil`) and the
+        // initial "Loading…" state is never shown.
+        guard statusItem != nil else { return }
+
         lock.lock()
         let next = pending
         pending = nil

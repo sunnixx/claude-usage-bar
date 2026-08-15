@@ -8,6 +8,55 @@ private func RGB(_ r: BYTE, _ g: BYTE, _ b: BYTE) -> COLORREF {
     COLORREF(r) | (COLORREF(g) << 8) | (COLORREF(b) << 16)
 }
 
+/// Normal/stale/critical text colours for one taskbar theme.
+private struct IconPalette {
+    let normal: COLORREF
+    let stale: COLORREF
+    let critical: COLORREF
+}
+
+/// Dark taskbar (the pre-existing behaviour, and the fallback when the
+/// registry read below fails): light digits on the transparent icon.
+/// `stale` is a step down from white, not pure grey-on-grey, so it stays
+/// legibly distinct from `normal` rather than just dim.
+private let darkTaskbarPalette = IconPalette(
+    normal: RGB(255, 255, 255),
+    stale: RGB(170, 170, 170),
+    critical: RGB(255, 90, 90)
+)
+
+/// Light taskbar (Windows 11's default on a large share of installs): dark
+/// digits. `normal` is a near-black, not pure black (RGB(0,0,0) == 0x000000)
+/// — the alpha-forcing loop below tests `pixels[i] & 0x00FF_FFFF != 0` to
+/// decide which pixels DrawTextW actually wrote, so a pure-black glyph would
+/// read as "unwritten" and stay fully transparent.
+private let lightTaskbarPalette = IconPalette(
+    normal: RGB(16, 16, 16),
+    stale: RGB(120, 120, 120),
+    critical: RGB(196, 43, 43)
+)
+
+/// `HKCU\...\Themes\Personalize!SystemUsesLightTheme` (DWORD; 1 = light
+/// taskbar, 0 or absent = dark taskbar) governs the taskbar's own theme,
+/// which is what this icon is drawn against — a separate `AppsUseLightTheme`
+/// value exists for app windows and is not what matters here. Falls back to
+/// the dark-taskbar palette (this app's original, pre-review behaviour) on
+/// any registry failure: an unreadable key is far more likely to mean "this
+/// isn't a real desktop session" than "this user has an unusual theme," and
+/// the dark palette is the one that was already shipping.
+private func taskbarPalette() -> IconPalette {
+    let subKey = #"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"#
+    let valueName = "SystemUsesLightTheme"
+    var value: DWORD = 0
+    var size: DWORD = DWORD(MemoryLayout<DWORD>.size)
+    let status = RegGetValueW(
+        HKEY_CURRENT_USER, subKey.wide, valueName.wide,
+        DWORD(RRF_RT_REG_DWORD), nil, &value, &size
+    )
+    guard status == ERROR_SUCCESS else { return darkTaskbarPalette }
+    return value != 0 ? lightTaskbarPalette : darkTaskbarPalette
+}
+
 /// `Shell_NotifyIcon` gives you a 16x16 icon and a tooltip — there is no
 /// equivalent of NSStatusItem's title, so Windows cannot show "37%" as text
 /// beside an icon. It draws the number into the icon instead, which is what
@@ -92,8 +141,9 @@ enum Win32Icon {
 
             SetBkMode(memDC, TRANSPARENT)
             // Critical wins over stale: a near-limit warning must not be softened.
-            let colourRef: COLORREF = critical ? RGB(232, 74, 74)
-                : (stale ? RGB(140, 140, 140) : RGB(255, 255, 255))
+            let palette = taskbarPalette()
+            let colourRef: COLORREF = critical ? palette.critical
+                : (stale ? palette.stale : palette.normal)
             SetTextColor(memDC, colourRef)
 
             var rect = RECT(left: 0, top: 0, right: size, bottom: size)
