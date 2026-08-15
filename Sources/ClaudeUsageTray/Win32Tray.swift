@@ -20,6 +20,16 @@ private let kMenuQuit: UINT = 3
 /// anything actually shared) — a computed value sidesteps that entirely.
 private func hwndMessage() -> HWND? { HWND(bitPattern: -3) }
 
+/// Explorer (and therefore the taskbar and notification area) can restart at
+/// any time — a crash, a shell update installing, or the user restarting it
+/// by hand from Task Manager — and every process's `Shell_NotifyIcon` icon is
+/// destroyed when that happens; `NIM_ADD` is never reissued automatically.
+/// The documented way to recover is to register this well-known message at
+/// startup and re-add the icon whenever it arrives. `RegisterWindowMessageW`
+/// returns a plain `UINT`, not a pointer, so unlike `hwndMessage()` above it
+/// is fine as ordinary global state under Swift 6 concurrency checking.
+private let kTaskbarCreatedMessage: UINT = RegisterWindowMessageW("TaskbarCreated".wide)
+
 /// Windows tray via Shell_NotifyIcon on a message-only window.
 ///
 /// Win32 UI objects belong to the thread that created them, so every call below
@@ -33,19 +43,50 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     /// guaranteed to survive the closure returning.
     private static let className = "ClaudeUsageBarWindow".wide
 
-    private var window: HWND?
     private var icon: HICON?
-    private var handlers: TrayHandlers?
 
     private let lock = NSLock()
-    private var pending: TrayContent?
-    private var shown: TrayContent?
 
-    /// The thread that calls `run` and owns the message-only window. Recorded
-    /// so `update` can tell whether it is already executing there (e.g.
-    /// called synchronously from inside `WndProc` via `menuWillOpen`) versus
-    /// from the background poll task.
-    private var uiThread: Thread?
+    /// `window`, `uiThread` and `handlers` are written exactly once, during
+    /// `run`'s startup, on the thread that calls `run`. But `main.swift`
+    /// calls `driver.start()` — which can invoke `update` from the detached
+    /// poll task — before it calls `tray.run(...)`, so a call to `update`
+    /// arriving that early races those writes with its own reads of the same
+    /// storage on a different thread with no synchronisation between them,
+    /// which is undefined behaviour regardless of how unlikely the timing
+    /// window is. `@unchecked Sendable` on this class only suppresses the
+    /// compiler's static check; it does not make the race benign. All three
+    /// are guarded by `lock` (shared with `pending` below — the two are
+    /// never held across each other, so there is no nesting risk) via the
+    /// private backing/computed-property pairs underneath.
+    private var _window: HWND?
+    private var _uiThread: Thread?
+    private var _handlers: TrayHandlers?
+
+    private var window: HWND? {
+        get { lock.lock(); defer { lock.unlock() }; return _window }
+        set { lock.lock(); _window = newValue; lock.unlock() }
+    }
+    private var uiThread: Thread? {
+        get { lock.lock(); defer { lock.unlock() }; return _uiThread }
+        set { lock.lock(); _uiThread = newValue; lock.unlock() }
+    }
+    private var handlers: TrayHandlers? {
+        get { lock.lock(); defer { lock.unlock() }; return _handlers }
+        set { lock.lock(); _handlers = newValue; lock.unlock() }
+    }
+
+    /// Guarded by `lock`; written from any thread via `update`.
+    private var pending: TrayContent?
+    /// UI thread only: never read or written off the thread that runs the
+    /// message loop, so it needs no lock of its own.
+    private var shown: TrayContent?
+    /// UI thread only. True when `shown` has changed since the icon/tooltip
+    /// were last actually rendered via `Shell_NotifyIconW`. Split from
+    /// `shown` itself so the UI thread can update `shown` — cheap, pure Swift
+    /// state — without also being forced to perform the render, which is not
+    /// cheap and not safe to do from every calling context (see `update`).
+    private var needsRender = false
 
     public init() {}
 
@@ -68,12 +109,28 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         }
 
         // HWND_MESSAGE: a message-only window, so nothing appears on screen.
-        window = Self.className.withUnsafeBufferPointer { buffer in
+        let created = Self.className.withUnsafeBufferPointer { buffer in
             CreateWindowExW(
                 0, buffer.baseAddress, buffer.baseAddress, 0, 0, 0, 0, 0,
                 hwndMessage(), nil, instance, nil
             )
         }
+        // If either RegisterClassExW or CreateWindowExW failed, `window`
+        // stays nil: Shell_NotifyIconW(NIM_ADD) below would then silently
+        // fail too (no icon, no error surfaced to the user), and — far
+        // worse — GetMessageW blocks forever on a thread that owns no
+        // window and therefore can never be the target of a WM_QUIT it
+        // never receives. That reads as the whole app having silently
+        // hung, with no tray icon and no way to tell why. Fail loudly and
+        // exit instead of leaving that undiagnosable.
+        guard let created else {
+            FileHandle.standardError.write(Data(
+                "claude-usage-bar: CreateWindowExW failed — could not create the tray's message-only window.\n".utf8
+            ))
+            exit(1)
+        }
+        window = created
+
         // Route WndProc callbacks back to this instance. Unretained: the
         // instance outlives the window, which lives for the process.
         _ = SetWindowLongPtrW(
@@ -81,11 +138,7 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
             LONG_PTR(Int(bitPattern: Unmanaged.passUnretained(self).toOpaque()))
         )
 
-        var data = notifyData()
-        data.uFlags = UINT(NIF_ICON) | UINT(NIF_MESSAGE) | UINT(NIF_TIP)
-        data.uCallbackMessage = kTrayMessage
-        _ = Shell_NotifyIconW(DWORD(NIM_ADD), &data)
-
+        addIcon()
         applyPending()
 
         // GetMessageW's BOOL return imports as Swift Bool, not Int32, under
@@ -116,21 +169,26 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         pending = content
         lock.unlock()
 
-        // Drain inline when already on the UI thread — notably when `update`
-        // is invoked synchronously from `menuWillOpen`, via the driver's
-        // forced republish while `showMenu` is about to run inside the same
-        // `WndProc` call. Posting a message in that case would queue the
-        // refresh to be applied AFTER `showMenu` has already read `shown` and
-        // built the menu — the same stale-menu-on-open bug the macOS and
-        // Linux backends fixed by draining inline on their own UI threads.
-        // Off the UI thread (the background poll task), PostMessage is one of
-        // the few thread-safe Win32 calls, and — unlike SendMessage — it does
-        // not block waiting for WndProc to process it, so it cannot re-enter
-        // the driver synchronously, satisfying the TrayBackend.update
-        // contract.
+        // On the UI thread — notably when `update` is invoked synchronously
+        // from `menuWillOpen`, via the driver's forced republish while
+        // `showMenu` is about to run inside the same WndProc call — merge
+        // `pending` into `shown` right now, so `showMenu` reads fresh
+        // content instead of what was there before this call. That merge is
+        // pure Swift state (no GDI, no Shell_NotifyIconW) and is exactly
+        // what menu-open freshness needs; it deliberately does NOT also
+        // render the icon/tooltip here. Shell_NotifyIconW can perform a
+        // blocking SendMessageTimeout to Explorer and stall for seconds —
+        // and this call is running on the UI thread while the driver holds
+        // its non-recursive publishLock across it. If that stall let some
+        // other sent message reach WndProc's kTrayMessage or WM_COMMAND
+        // arms, menuWillOpen/toggleLoginItem would call back into the
+        // driver and try to re-acquire that same publishLock on this same
+        // thread — a permanent deadlock with no timeout, which is exactly
+        // the hazard TrayBackend.update's own contract names. Posting the
+        // render instead guarantees it happens later, off this call stack,
+        // strictly after `update` — and the driver's lock — has returned.
         if Thread.current === uiThread {
-            applyPending()
-            return
+            applyShownOnly()
         }
         if let window { _ = PostMessageW(window, kUpdateMessage, 0, 0) }
     }
@@ -163,6 +221,14 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         case UINT(WM_DESTROY):
             PostQuitMessage(0)
             return 0
+        case kTaskbarCreatedMessage where kTaskbarCreatedMessage != 0:
+            // Explorer just (re)created the taskbar — our previous
+            // Shell_NotifyIcon registration, and the icon that went with
+            // it, are gone. Re-add using whatever we last rendered; no new
+            // icon needs to be drawn, since the GDI handle in `icon` was
+            // never invalidated by this — only the shell's record of it was.
+            tray.addIcon()
+            return 0
         default:
             return DefWindowProcW(hwnd, msg, wparam, lparam)
         }
@@ -177,35 +243,73 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         }
     }
 
+    /// Merges `pending` into `shown` without touching the icon or calling
+    /// Shell_NotifyIconW — see the long comment in `update` for why the
+    /// inline (same-thread-as-UI) path must stop here and let the posted
+    /// `kUpdateMessage` perform the actual render later. Left as a
+    /// standalone step, not folded into `applyPending`, so both the inline
+    /// caller and `applyPending` itself can trigger "needs a render" without
+    /// duplicating the comparison logic.
+    private func applyShownOnly() {
+        lock.lock()
+        let next = pending
+        lock.unlock()
+        guard let next, next != shown else { return }
+        shown = next
+        needsRender = true
+    }
+
     private func applyPending() {
         lock.lock()
         let next = pending
         pending = nil
         lock.unlock()
 
-        guard let next, next != shown else { return }
-        shown = next
+        if let next, next != shown {
+            shown = next
+            needsRender = true
+        }
+        guard needsRender else { return }
+        needsRender = false
+        render(shown)
+    }
+
+    /// Performs the actual Shell_NotifyIconW(NIM_MODIFY) call — the part
+    /// `update`'s inline path must never do directly; see its comment.
+    private func render(_ content: TrayContent?) {
+        guard let content else { return }
 
         let fresh = Win32Icon.make(
-            percent: next.title.percent,
-            critical: next.title.isCritical,
-            stale: next.title.isStale
+            percent: content.title.percent,
+            critical: content.title.isCritical,
+            stale: content.title.isStale
         )
         var data = notifyData()
         data.uFlags = UINT(NIF_ICON) | UINT(NIF_TIP)
         data.hIcon = fresh
-        withUnsafeMutableBytes(of: &data.szTip) { buffer in
-            let tip = next.title.text.wide
-            let dest = buffer.bindMemory(to: UInt16.self)
-            for (i, unit) in tip.prefix(dest.count - 1).enumerated() { dest[i] = unit }
-            dest[min(tip.count, dest.count - 1)] = 0
-        }
+        fill(tip: content.title.text, into: &data)
         _ = Shell_NotifyIconW(DWORD(NIM_MODIFY), &data)
 
         // Replace only after the shell has taken the new one, then free the old
         // handle — otherwise this leaks a GDI object every minute.
         if let icon { DestroyIcon(icon) }
         icon = fresh
+    }
+
+    /// `NIM_ADD`, shared by `run`'s startup and by the `TaskbarCreated`
+    /// recovery path in `dispatch`. Uses whichever `HICON` is already
+    /// current in `icon` (nil on the very first call, before the first
+    /// `applyPending` has run — Shell_NotifyIcon accepts that and shows the
+    /// system default icon until the first real render arrives) rather than
+    /// rendering a new one, since a taskbar restart does not invalidate the
+    /// GDI handle, only the shell's bookkeeping about it.
+    private func addIcon() {
+        var data = notifyData()
+        data.uFlags = UINT(NIF_ICON) | UINT(NIF_MESSAGE) | UINT(NIF_TIP)
+        data.uCallbackMessage = kTrayMessage
+        data.hIcon = icon
+        if let shown { fill(tip: shown.title.text, into: &data) }
+        _ = Shell_NotifyIconW(DWORD(NIM_ADD), &data)
     }
 
     private func showMenu() {
@@ -257,6 +361,17 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         data.hWnd = window
         data.uID = 1
         return data
+    }
+
+    /// Shared tooltip-copying step between `render` (normal updates) and
+    /// `addIcon` (startup / TaskbarCreated recovery).
+    private func fill(tip text: String, into data: inout NOTIFYICONDATAW) {
+        withUnsafeMutableBytes(of: &data.szTip) { buffer in
+            let tip = text.wide
+            let dest = buffer.bindMemory(to: UInt16.self)
+            for (i, unit) in tip.prefix(dest.count - 1).enumerated() { dest[i] = unit }
+            dest[min(tip.count, dest.count - 1)] = 0
+        }
     }
 
     private func cleanUp() {

@@ -38,13 +38,25 @@ enum Win32Icon {
         else { return nil }
         defer { _ = DeleteObject(colour) }
 
-        // A 1bpp mask is required by CreateIconIndirect. Left all-zero so every
-        // pixel is opaque and the alpha in the colour bitmap does the work.
-        guard let mask = CreateBitmap(size, size, 1, 1, nil) else { return nil }
+        // A 1bpp AND-mask is required by CreateIconIndirect. CreateBitmap's
+        // documented contract is that when lpvBits is NULL the bitmap's
+        // initial contents are UNDEFINED, not zeroed — passing NULL (as an
+        // earlier version of this code did) hands CreateIconIndirect garbage
+        // AND-mask bits that punch out or invert arbitrary pixels,
+        // differently per allocation. Pass an explicitly zeroed buffer
+        // instead, so every mask bit is 0 ("not masked out") and the alpha
+        // channel in the colour bitmap does all the transparency work.
+        // Scanlines for a 1bpp bitmap are WORD-aligned: at `size` == 32,
+        // that's 32 bits == 4 bytes per row already, so no row padding is
+        // needed beyond the natural byte count.
+        let maskStride = ((Int(size) + 15) / 16) * 2
+        let maskBytes = [UInt8](repeating: 0, count: maskStride * Int(size))
+        guard let mask = maskBytes.withUnsafeBytes({ raw in
+            CreateBitmap(size, size, 1, 1, raw.baseAddress)
+        }) else { return nil }
         defer { _ = DeleteObject(mask) }
 
         let old = SelectObject(memDC, colour)
-        defer { _ = SelectObject(memDC, old) }
 
         let text: String
         if let percent { text = String(percent) } else { text = "—" }
@@ -71,6 +83,17 @@ enum Win32Icon {
             UINT(DT_CENTER) | UINT(DT_VCENTER) | UINT(DT_SINGLELINE)
         )
 
+        // GDI batches drawing calls per thread rather than executing them
+        // immediately, and CreateDIBSection's documented contract is that
+        // callers who read or write the bitmap's bits directly (as the alpha
+        // loop below does) MUST call GdiFlush() first — otherwise DrawTextW's
+        // writes may not yet be visible to this process's own memory reads.
+        // Whether that race is observable depends on the GDI batch limit, the
+        // thread's pending-call count, and timing, none of which this
+        // environment's CI can exercise: it would compile and link fine, and
+        // could still render a blank icon on a real machine.
+        GdiFlush()
+
         // DrawTextW leaves alpha at 0 on a 32bpp DIB, which renders the glyph
         // fully transparent. Force alpha opaque wherever a pixel was written.
         if let bits {
@@ -79,6 +102,15 @@ enum Win32Icon {
                 pixels[i] |= 0xFF00_0000
             }
         }
+
+        // CreateIconIndirect copies from hbmColor/hbmMask by value, but a
+        // bitmap still selected into a DC is not a valid source for that copy
+        // — deselect `colour` from `memDC` (restoring the DC's original
+        // bitmap) before handing it to CreateIconIndirect, rather than
+        // leaving that to the `defer` below, which would only run AFTER
+        // CreateIconIndirect has already read (or failed to read) the
+        // bitmap.
+        _ = SelectObject(memDC, old)
 
         var iconInfo = ICONINFO(
             fIcon: true, xHotspot: 0, yHotspot: 0, hbmMask: mask, hbmColor: colour

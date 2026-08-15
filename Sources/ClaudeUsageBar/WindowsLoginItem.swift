@@ -59,9 +59,26 @@ struct WindowsLoginItem: LoginItemControlling {
     }
 
     private func exePath() -> String {
-        var buffer = [UInt16](repeating: 0, count: Int(MAX_PATH))
-        let length = GetModuleFileNameW(nil, &buffer, DWORD(MAX_PATH))
-        return String(decoding: buffer.prefix(Int(length)), as: UTF16.self)
+        // GetModuleFileNameW does not report the size actually needed when
+        // the buffer is too small: it just fills the buffer, NUL-terminates
+        // within it, and returns a value equal to the buffer's own capacity
+        // (with the last error set to ERROR_INSUFFICIENT_BUFFER) — silent
+        // truncation rather than "here's how big to make it." A fixed
+        // MAX_PATH (260) buffer is exactly the case that bites on any
+        // install path using the long-path opt-in, so grow and retry
+        // instead of trusting a single MAX_PATH-sized attempt. Capped so a
+        // pathological environment cannot spin this forever.
+        var capacity = DWORD(MAX_PATH)
+        while capacity <= 1 << 16 {
+            var buffer = [UInt16](repeating: 0, count: Int(capacity))
+            let written = GetModuleFileNameW(nil, &buffer, capacity)
+            if written == 0 { return "" }
+            if written < capacity {
+                return String(decoding: buffer.prefix(Int(written)), as: UTF16.self)
+            }
+            capacity *= 2
+        }
+        return ""
     }
 }
 #endif
