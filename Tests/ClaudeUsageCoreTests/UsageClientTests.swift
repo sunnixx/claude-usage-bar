@@ -2,6 +2,12 @@ import Foundation
 import Testing
 @testable import ClaudeUsageCore
 
+// URLRequest/HTTPURLResponse live in Foundation on Apple platforms and in
+// FoundationNetworking on Linux and Windows.
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+
 private struct StubTokens: TokenProviding {
     let result: Result<TokenLookup, TokenStoreError>
 

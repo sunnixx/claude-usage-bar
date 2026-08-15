@@ -17,10 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # macos-latest already ships an Xcode toolchain whose Swift compiler
+      # matches its SDK. Installing a separate Swift 6.0.3 toolchain via
+      # setup-swift there causes an SDK/compiler version mismatch
+      # ("this SDK is not supported by the compiler"), so only install on
+      # Linux and Windows, which have no preinstalled Swift toolchain.
       - name: Set up Swift
+        if: runner.os != 'macOS'
         uses: SwiftyLab/setup-swift@latest
         with:
-          swift-version: "6.0"
+          swift-version: "6.1"
 
       # libayatana-appindicator and GTK are needed from Task 6 onward. Installed
       # now so the workflow does not change when the Linux backend lands.
