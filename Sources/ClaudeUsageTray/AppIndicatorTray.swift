@@ -9,7 +9,8 @@ import Foundation
 /// is not this app's to fix.
 ///
 /// GTK is not thread-safe. Every call into GTK below happens on the thread that
-/// called `run`, and `update` reaches it only through `g_idle_add`.
+/// called `run`: `update` either runs inline (when it is already being called
+/// from that thread — see its doc comment) or hops over via `g_idle_add`.
 /// The Swift importer gives every GTK opaque struct (`GtkWidget`, `GtkLabel`,
 /// `GtkMenuShell`, `GtkContainer`, ...) its own distinct pointer type, even
 /// though at the C level they are all just `GtkWidget*` upcasts/downcasts
@@ -32,23 +33,63 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
 
     public init() {}
 
+    /// The thread that calls `run` and drives `gtk_main()`. Recorded so
+    /// `update` can tell whether it is already executing there (e.g. called
+    /// synchronously from a GTK signal handler on this same thread) versus
+    /// from the background poll task, without relying on `Thread.isMainThread`
+    /// meaning "the GTK thread" by coincidence.
+    private var gtkThread: Thread?
+
     public func run(handlers: TrayHandlers) -> Never {
         self.handlers = handlers
+        gtkThread = Thread.current
 
         var argc: Int32 = 0
-        gtk_init(&argc, nil)
+        // gtk_init() aborts the process outright (exit(1)) on failure, with
+        // only GTK's own unattributed "cannot open display" warning on
+        // stderr — nothing naming this app, and no chance for us to add
+        // context. gtk_init_check() instead reports failure so we can say
+        // something a user (or a bug report) can actually act on.
+        guard gtk_init_check(&argc, nil) != 0 else {
+            FileHandle.standardError.write(Data(
+                """
+                claude-usage-bar: gtk_init_check failed — no display available. \
+                Is a graphical session running, and is DISPLAY or \
+                WAYLAND_DISPLAY set in this process's environment?\n
+                """.utf8
+            ))
+            exit(1)
+        }
 
-        indicator = app_indicator_new(
+        guard let newIndicator = app_indicator_new(
             "claude-usage-bar",
             "utilities-system-monitor",
             APP_INDICATOR_CATEGORY_APPLICATION_STATUS
-        )
+        ) else {
+            // Undocumented failure mode, but nothing rules it out, and the
+            // silent alternative — the process runs forever with no tray and
+            // no error — is worse than exiting loudly.
+            FileHandle.standardError.write(Data(
+                "claude-usage-bar: app_indicator_new returned NULL — could not create the tray indicator.\n".utf8
+            ))
+            exit(1)
+        }
+        indicator = newIndicator
+
         app_indicator_set_status(indicator, APP_INDICATOR_STATUS_ACTIVE)
         app_indicator_set_title(indicator, "Claude usage")
 
         applyPending()
         gtk_main()
-        fatalError("gtk_main returned")
+        // gtk_main() returns — it does not run forever — precisely because
+        // the Quit menu item calls gtk_main_quit(), whose entire job is to
+        // make it return. Unlike NSApplication.terminate(_:) on macOS, which
+        // genuinely never returns, falling through here is the NORMAL,
+        // expected path for a user-initiated quit, not a failure: a
+        // fatalError() here would trap on every single Quit, producing a
+        // crash report (and, on Ubuntu with apport, a "closed unexpectedly"
+        // dialog) for completely ordinary use.
+        exit(0)
     }
 
     public func update(_ content: TrayContent) {
@@ -56,12 +97,26 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         pending = content
         lock.unlock()
 
-        // Hop to the GTK thread. The retained pointer is balanced by the
-        // takeRetainedValue in the callback below. g_idle_add itself does not
-        // invoke the callback synchronously — it only schedules it on the
-        // default main context, which the thread running gtk_main() drains —
-        // so this call cannot block or re-enter the driver, satisfying the
-        // TrayBackend.update contract.
+        // Drain inline when already running on the GTK thread — notably when
+        // `update` is invoked synchronously from within a GTK signal handler
+        // (the menu's forced republish on open, wired below). Deferring with
+        // g_idle_add in that case would queue the rebuild to run AFTER GTK
+        // has already finished reading the stale menu for display — the same
+        // stale-menu-on-open bug that was fixed on the AppKit backend by
+        // draining inline on the main thread instead of dispatching. Off the
+        // GTK thread (the background poll task), keep hopping over via
+        // g_idle_add, which is non-blocking and cannot re-enter the driver
+        // synchronously, satisfying the TrayBackend.update contract.
+        if Thread.current === gtkThread {
+            applyPending()
+            return
+        }
+
+        // The retained pointer is balanced by the takeRetainedValue in the
+        // callback below. g_idle_add itself does not invoke the callback
+        // synchronously — it only schedules it on the default main context,
+        // which the GTK thread drains via gtk_main() — so this branch also
+        // cannot block or re-enter the driver.
         let box = Unmanaged.passRetained(self).toOpaque()
         g_idle_add({ raw in
             guard let raw else { return 0 }
@@ -116,14 +171,47 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         appendAction(to: menu, title: "Quit") { gtk_main_quit() }
 
         gtk_widget_show_all(menu)
+
+        // Refresh-on-open: GTK has no signal literally named "about-to-show".
+        // "show" is the closest local analogue, and is the technique other
+        // GTK tray implementations use to detect a pending popup. Connected
+        // AFTER gtk_widget_show_all() above, deliberately: show_all() itself
+        // emits "show" on this menu synchronously, on this same thread — if
+        // the handler were already connected, that call would immediately
+        // invoke handlers.menuWillOpen() -> driver.publish(force: true),
+        // which calls back into this very `update` while `render` (called
+        // from `applyPending`, called from `update`) is still on the stack,
+        // deadlocking on the driver's non-reentrant `publishLock`. Connecting
+        // afterwards means only a later, real "show" emission — e.g. from
+        // the tray host actually popping the menu open — reaches the
+        // handler.
+        //
+        // UNVERIFIED: real desktops speak StatusNotifierItem to this
+        // indicator over DBusMenu, not a local GTK popup, and libayatana's
+        // AppIndicator API exposes no popup/about-to-open callback of its
+        // own. Whether "show" actually fires on user-initiated open under a
+        // real DBusMenu host (as opposed to only ever firing here, from our
+        // own show_all() call, which this ordering deliberately excludes) is
+        // not something this environment can observe. If it turns out not to
+        // fire, refresh-on-open silently degrades to poll-interval staleness
+        // — not a crash, not wrong data, just not as fresh as intended.
+        connectSignal(gcast(menu), "show") { [weak self] in
+            self?.handlers?.menuWillOpen()
+        }
+
         // app_indicator_set_menu releases the previous menu (g_object_unref)
         // and takes ownership of the new one (g_object_ref_sink) internally —
         // verified against libayatana-appindicator's app-indicator.c. Losing
         // the last reference to the old GtkMenu drops its child widgets too,
         // which runs the GDestroyNotify passed to g_signal_connect_data below
-        // and frees the associated Box. So rebuilding the whole menu on every
-        // render (once a minute) does not leak a widget per poll; no explicit
-        // teardown of the previous menu is needed here.
+        // and frees the associated Box, for both the "activate" and "show"
+        // handlers. So rebuilding the whole menu on every render (once a
+        // minute) does not leak a widget per poll; no explicit teardown of
+        // the previous menu is needed here. UNVERIFIED beyond that: whether
+        // this is true end-to-end also depends on dbusmenu-gtk's mirrored
+        // parse tree releasing its own references when the root menu is
+        // replaced, which is a second library's ownership behavior this
+        // review did not read — see the report's UNVERIFIED list.
         app_indicator_set_menu(indicator, gcast(menu))
     }
 
@@ -138,7 +226,7 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         action: @escaping () -> Void
     ) {
         let item = gtk_menu_item_new_with_label(title)
-        connectActivate(item, action)
+        connectSignal(item, "activate", action)
         gtk_menu_shell_append(gcast(menu), item)
     }
 
@@ -150,22 +238,25 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     ) {
         let item = gtk_check_menu_item_new_with_label(title)
         gtk_check_menu_item_set_active(gcast(item), checked ? 1 : 0)
-        connectActivate(item, action)
+        connectSignal(item, "activate", action)
         gtk_menu_shell_append(gcast(menu), item)
     }
 
-    /// Bridges a Swift closure to a GTK signal. The box is freed by the
-    /// destroy notify when the menu item goes away.
-    private func connectActivate(
-        _ item: UnsafeMutablePointer<GtkWidget>?,
+    /// Bridges a capture-free Swift closure to any zero-argument GTK signal
+    /// (`(GtkWidget *, gpointer) -> void` handlers — "activate" and "show"
+    /// both match this shape). The box is freed by the destroy notify when
+    /// the connected widget goes away.
+    private func connectSignal<T>(
+        _ widget: UnsafeMutablePointer<T>?,
+        _ signal: String,
         _ action: @escaping () -> Void
     ) {
         final class Box { let action: () -> Void; init(_ a: @escaping () -> Void) { action = a } }
         let box = Unmanaged.passRetained(Box(action)).toOpaque()
 
         g_signal_connect_data(
-            UnsafeMutableRawPointer(item),
-            "activate",
+            UnsafeMutableRawPointer(widget),
+            signal,
             unsafeBitCast(
                 { (_: UnsafeMutableRawPointer?, data: UnsafeMutableRawPointer?) in
                     guard let data else { return }
