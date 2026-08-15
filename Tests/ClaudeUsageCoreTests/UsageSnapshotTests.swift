@@ -79,6 +79,47 @@ import Testing
         }
     }
 
+    // MARK: - Window roles
+    //
+    // `ProviderSnapshot.primary` selects by role, not position, so the decoder
+    // must tag each window correctly: session is `.primary` (what the menu
+    // bar segment shows), the weekly window is `.secondary`, and per-model
+    // limits are `.scoped`.
+
+    @Test func decoderTagsEachWindowWithItsRole() throws {
+        let snapshot = try UsageSnapshot.decode(from: Fixture.data("full"), fetchedAt: fetchedAt)
+
+        #expect(snapshot.windows[0].role == .primary)
+        #expect(snapshot.windows[1].role == .secondary)
+        #expect(scopedWindows(snapshot).allSatisfy { $0.role == .scoped })
+        #expect(snapshot.primary?.label == "Session (5h)")
+        #expect(snapshot.primary?.percent == 37)
+    }
+
+    @Test func primaryIsNilWhenTheSessionWindowIsAbsentButTheWeeklyOneIsPresent() throws {
+        // The exact regression this fix exists to prevent: no `session` limit
+        // and a null `five_hour`, but a real `weekly_all` limit. The weekly
+        // row must still appear in `windows` — the dropdown shows it — but
+        // `primary` (what the unlabelled menu bar segment shows) must be nil,
+        // never the weekly figure silently standing in for the session one.
+        let json = """
+        {
+            "five_hour": null,
+            "limits": [
+                {"kind": "weekly_all", "percent": 26.0, "resets_at": "2026-08-08T07:00:00Z"}
+            ]
+        }
+        """
+        let decoded = try JSONDecoder().decode(UsageSnapshot.Payload.self, from: Data(json.utf8))
+        let snapshot = UsageSnapshot.snapshot(from: decoded, fetchedAt: fetchedAt)
+
+        #expect(snapshot.primary == nil)
+        #expect(snapshot.windows.count == 1)
+        #expect(snapshot.windows[0].label == "This week")
+        #expect(snapshot.windows[0].percent == 26)
+        #expect(snapshot.windows[0].role == .secondary)
+    }
+
     // MARK: - Scope-reset de-duplication
     //
     // A per-model scope that resets at the same instant as the weekly window

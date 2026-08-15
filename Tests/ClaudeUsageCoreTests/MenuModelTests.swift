@@ -22,9 +22,9 @@ import Testing
             provider: .anthropic,
             planName: nil,
             windows: [
-                UsageWindow(label: "Session (5h)", percent: 37, resetsAt: try date("2026-08-04T09:00:00Z")),
+                UsageWindow(label: "Session (5h)", percent: 37, resetsAt: try date("2026-08-04T09:00:00Z"), role: .primary),
                 UsageWindow(label: "This week", percent: 26, resetsAt: try date("2026-08-08T07:00:00Z")),
-                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, isScoped: true),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, role: .scoped),
             ],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
@@ -48,7 +48,7 @@ import Testing
         let snapshot = ProviderSnapshot(
             provider: .anthropic,
             planName: nil,
-            windows: [UsageWindow(label: "Session (5h)", percent: 93, resetsAt: nil)],
+            windows: [UsageWindow(label: "Session (5h)", percent: 93, resetsAt: nil, role: .primary)],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
 
@@ -113,7 +113,7 @@ import Testing
             provider: .anthropic,
             planName: nil,
             windows: [
-                UsageWindow(label: "Session (5h)", percent: 4, resetsAt: nil),
+                UsageWindow(label: "Session (5h)", percent: 4, resetsAt: nil, role: .primary),
                 UsageWindow(label: "This week", percent: 0, resetsAt: nil),
             ],
             fetchedAt: now
@@ -231,9 +231,9 @@ extension MenuModelTests {
             provider: .anthropic,
             planName: nil,
             windows: [
-                UsageWindow(label: "Session (5h)", percent: sessionPercent, resetsAt: try date("2026-08-04T09:00:00Z")),
+                UsageWindow(label: "Session (5h)", percent: sessionPercent, resetsAt: try date("2026-08-04T09:00:00Z"), role: .primary),
                 UsageWindow(label: "This week", percent: weekPercent, resetsAt: try date("2026-08-08T07:00:00Z")),
-                UsageWindow(label: "Fable", percent: 10, resetsAt: scopeResetsAt, isScoped: true),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: scopeResetsAt, role: .scoped),
             ],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )

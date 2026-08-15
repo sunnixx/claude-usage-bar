@@ -8,7 +8,7 @@ import Testing
             provider: .anthropic,
             planName: nil,
             windows: [
-                UsageWindow(label: "Session (5h)", percent: percent, resetsAt: nil),
+                UsageWindow(label: "Session (5h)", percent: percent, resetsAt: nil, role: .primary),
                 UsageWindow(label: "This week", percent: 10, resetsAt: nil),
             ],
             fetchedAt: Date(timeIntervalSince1970: seconds)

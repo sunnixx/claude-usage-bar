@@ -101,7 +101,8 @@ private func sampleSnapshot() throws -> ProviderSnapshot {
         windows: [
             UsageWindow(
                 label: "Session (5h)", percent: 12,
-                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
+                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z")),
+                role: .primary
             )
         ],
         fetchedAt: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z"))

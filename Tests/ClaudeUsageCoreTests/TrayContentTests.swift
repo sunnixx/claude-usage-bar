@@ -20,13 +20,14 @@ import Testing
             windows: [
                 UsageWindow(
                     label: "Session (5h)", percent: 37,
-                    resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
+                    resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z")),
+                    role: .primary
                 ),
                 UsageWindow(
                     label: "This week", percent: 26,
                     resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-08T07:00:00Z"))
                 ),
-                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, isScoped: true),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, role: .scoped),
             ],
             fetchedAt: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z"))
         )
