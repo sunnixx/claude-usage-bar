@@ -24,6 +24,18 @@ Login" — `SMAppService` is unreliable for bundles elsewhere.
 macOS will ask for Keychain access the first time, because the item was
 created by the Claude Code CLI. Choose "Always Allow".
 
+### Linux
+
+    sudo apt install libayatana-appindicator3-dev libgtk-3-dev
+    ./Scripts/build-linux.sh
+
+Works on KDE, XFCE, Cinnamon, MATE and Budgie. **GNOME** hides tray icons
+unless the [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/)
+is installed — that applies to every tray app, not just this one.
+
+The token is read from `~/.claude/.credentials.json` (or `$CLAUDE_CONFIG_DIR`),
+read-only. Nothing here ever writes it.
+
 ## Test
 
     swift test
