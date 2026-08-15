@@ -30,8 +30,8 @@ import Testing
         )
     }
 
-    private func rows(_ state: UsageState, now: Date) -> [String] {
-        MenuModel.rows(for: state, now: now, calendar: calendar, locale: locale, timeZone: utc)
+    private func rows(_ state: UsageState, now: Date, provider: Provider = .anthropic) -> [String] {
+        MenuModel.rows(for: state, provider: provider, now: now, calendar: calendar, locale: locale, timeZone: utc)
             .map(MenuModel.monospaceLine)
     }
 
@@ -100,7 +100,7 @@ import Testing
     @Test func indentsScopeRowsOnly() throws {
         let now = try date("2026-08-04T07:48:00Z")
         let menuRows = MenuModel.rows(
-            for: .loaded(try loadedSnapshot()),
+            for: .loaded(try loadedSnapshot()), provider: .anthropic,
             now: now, calendar: calendar, locale: locale, timeZone: utc
         )
 
@@ -148,11 +148,24 @@ import Testing
         #endif
     }
 
+    /// A Codex transport failure must never be labelled "Can't reach
+    /// Anthropic" — for a user signed into Codex but not Claude Code, that
+    /// wording names a company they aren't even signed into. Regression
+    /// coverage for the defect this project has hit repeatedly: the right
+    /// message rendered under the wrong provider's name.
+    @Test func namesTheRightServiceForACodexFailure() throws {
+        let now = try date("2026-08-04T07:48:00Z")
+
+        #expect(rows(.unreachable, now: now, provider: .codex) == ["Can't reach OpenAI"])
+        #expect(rows(.noToken, now: now, provider: .codex) == ["Not signed in to Codex"])
+        #expect(rows(.unauthorized, now: now, provider: .codex) == ["Token expired — open Codex to refresh"])
+    }
+
     // MARK: structured rows
 
     @Test func buildsStructuredRowsForASnapshot() throws {
         let rows = MenuModel.rows(
-            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            for: .loaded(try loadedSnapshot()), provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
 
@@ -165,7 +178,7 @@ import Testing
 
     @Test func marksScopedRowsAsIndented() throws {
         let rows = MenuModel.rows(
-            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            for: .loaded(try loadedSnapshot()), provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
         let scoped = try #require(rows.first { $0.isIndented })
@@ -175,7 +188,7 @@ import Testing
 
     @Test func messageRowsCarryOnlyALabel() throws {
         let rows = MenuModel.rows(
-            for: .noToken, now: try date("2026-08-04T07:48:00Z"),
+            for: .noToken, provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
         let row = try #require(rows.first)
@@ -241,7 +254,7 @@ extension MenuModelTests {
 
     private func builtRows(_ snapshot: ProviderSnapshot) throws -> [MenuRow] {
         MenuModel.rows(
-            for: .loaded(snapshot), now: try date("2026-08-04T07:48:00Z"),
+            for: .loaded(snapshot), provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
     }
@@ -296,6 +309,10 @@ extension MenuModelTests {
         #expect(segments.count == 1)
         #expect(segments[0].text == "—")
         #expect(segments[0].percent == nil)
+        // Markless and providerless: neither provider's mark should be drawn
+        // for the placeholder, since neither is specifically the one that's
+        // unavailable. See `AppKitTray.renderTitle`.
+        #expect(segments[0].provider == nil)
     }
 
     @Test func marksACriticalSegmentIndependently() throws {
@@ -339,5 +356,36 @@ extension MenuModelTests {
         )
         let labels = rows.map(\.label)
         #expect(labels.contains { $0.contains("Not signed in") })
+    }
+}
+
+// MARK: - composedLabel
+//
+// Shared by the Linux menu-bar label (`AppIndicatorTray`) and the Windows
+// tray tooltip (`Win32Tray`), so both name providers identically. Lifted here
+// so it is unit-testable on every platform rather than only by hand on
+// Linux/Windows.
+
+extension MenuModelTests {
+    @Test func composedLabelNamesTheOnlySignedInProvider() {
+        let segments = [
+            StatusSegment(provider: .codex, text: "8%", percent: 8, isCritical: false, isStale: false),
+        ]
+        #expect(MenuModel.composedLabel(for: segments) == "Codex 8%")
+    }
+
+    @Test func composedLabelNamesBothProviders() {
+        let segments = [
+            StatusSegment(provider: .anthropic, text: "37%", percent: 37, isCritical: false, isStale: false),
+            StatusSegment(provider: .codex, text: "8%", percent: 8, isCritical: false, isStale: false),
+        ]
+        #expect(MenuModel.composedLabel(for: segments) == "Claude 37% · Codex 8%")
+    }
+
+    @Test func composedLabelOmitsAProviderNameForThePlaceholderSegment() {
+        let segments = [
+            StatusSegment(provider: nil, text: "—", percent: nil, isCritical: false, isStale: false),
+        ]
+        #expect(MenuModel.composedLabel(for: segments) == "—")
     }
 }

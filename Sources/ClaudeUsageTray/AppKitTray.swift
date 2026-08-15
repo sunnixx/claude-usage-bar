@@ -119,13 +119,19 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
                 title.append(NSAttributedString(string: "  "))
             }
 
-            let attachment = NSTextAttachment()
-            attachment.image = ProviderMark.image(for: segment.provider)
-            // Nudge the glyph down slightly so a 14pt square mark sits
-            // centred against a 12pt text baseline rather than riding high.
-            attachment.bounds = NSRect(x: 0, y: -2, width: 14, height: 14)
-            title.append(NSAttributedString(attachment: attachment))
-            title.append(NSAttributedString(string: " "))
+            // A `nil` provider is the neither-signed-in placeholder segment
+            // (see `MenuModel.statusSegments`) — draw no mark for it, rather
+            // than defaulting to one provider's mark and falsely implying
+            // that specific provider is the one that's unavailable.
+            if let provider = segment.provider {
+                let attachment = NSTextAttachment()
+                attachment.image = ProviderMark.image(for: provider)
+                // Nudge the glyph down slightly so a 14pt square mark sits
+                // centred against a 12pt text baseline rather than riding high.
+                attachment.bounds = NSRect(x: 0, y: -2, width: 14, height: 14)
+                title.append(NSAttributedString(attachment: attachment))
+                title.append(NSAttributedString(string: " "))
+            }
 
             let color: NSColor
             // Critical must beat stale: a near-limit warning must not be

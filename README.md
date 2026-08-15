@@ -15,6 +15,14 @@ provider, side by side. The Windows and Linux trays present the same
 information through their platform's own notification-area conventions — see
 below.
 
+Those marks are hand-drawn monochrome approximations — a six-spoke asterisk
+for Claude, a hexagon ring with an inner dot for Codex — not Anthropic's or
+OpenAI's official logos. That's deliberate, not a shortcut: bundling the real
+brand assets would mean licensing and keeping them in sync, and a drawn glyph
+can be marked as a template image so it adapts automatically to light mode,
+dark mode, and tinted menu bars, which a bitmap logo can't do for free. See
+`ProviderMark.swift` for the drawing code.
+
 Both providers are read-only and independent: **Claude Code**'s OAuth token is
 read from your login Keychain (macOS) or `~/.claude/.credentials.json` /
 `$CLAUDE_CONFIG_DIR` (Linux/Windows), and its usage is polled from
@@ -54,13 +62,22 @@ The Claude Code token is read from `~/.claude/.credentials.json` (or
 `$CLAUDE_CONFIG_DIR`); the Codex token from `~/.codex/auth.json` (or
 `$CODEX_HOME`). Both read-only — nothing here ever writes either.
 
+The menu bar label names each signed-in provider next to its reading, e.g.
+`Claude 37% · Codex 8%` — or just `Codex 8%` if only Codex is signed in.
+Naming the provider matters here more than on macOS: with only one provider
+signed in, a bare `8%` would be indistinguishable from the other provider's
+reading.
+
 ### Windows
 
     swift build -c release
 
-The tray shows the percentage drawn into the icon, because the Windows
-notification area has no text field beside an icon. The tooltip carries the
-same reading. Left-click or right-click the icon for the menu.
+The tray icon has room for only one number, so it draws whichever signed-in
+provider comes first (Claude, then Codex) — because the Windows notification
+area has no text field beside an icon. The tooltip has no such size limit and
+names every signed-in provider, e.g. `Claude 37% · Codex 8%`, so it carries
+more than the icon alone, not merely the same reading. Left-click or
+right-click the icon for the menu.
 
 The Claude Code token is read from `%USERPROFILE%\.claude\.credentials.json`
 (or `%CLAUDE_CONFIG_DIR%`); the Codex token from `%USERPROFILE%\.codex\auth.json`
@@ -93,7 +110,7 @@ credential.
 
     swift test
 
-145 tests on macOS as of this writing; a few more run on Linux and Windows —
+154 tests on macOS as of this writing; a few more run on Linux and Windows —
 the extra cases cover the file-based Claude Code token store
 (`#if !os(macOS)`), which macOS doesn't use because it reads the Keychain
 instead (Codex's file-based store runs its tests on every platform, since

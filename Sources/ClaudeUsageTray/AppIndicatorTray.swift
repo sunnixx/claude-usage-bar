@@ -113,7 +113,12 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         indicator = newIndicator
 
         app_indicator_set_status(indicator, APP_INDICATOR_STATUS_ACTIVE)
-        app_indicator_set_title(indicator, "Claude usage")
+        // Provider-neutral: this is set once, before any provider's state is
+        // known, and previously read "Claude usage" unconditionally — wrong
+        // for a user signed into Codex but not Claude Code. The label
+        // (below, in `render`) names each configured provider explicitly;
+        // this title does not need to.
+        app_indicator_set_title(indicator, "Usage")
 
         applyPending()
         gtk_main()
@@ -199,19 +204,33 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         // The label is the only place a percentage can appear; the icon is a
         // fixed themed glyph. Unlike a fixed icon, the label is plain text
         // with room for every configured provider, so it composes all of
-        // them via the same `statusSegments` macOS uses for its marks — just
-        // as text ("37% · 8%") instead of mark-plus-text. Using
-        // `statusSegments` also means a provider with no value (not signed
-        // in) is dropped rather than shown as a permanent placeholder — e.g.
-        // a Codex-only user sees Codex's reading here, not an empty Claude
-        // dash forever.
+        // them via the same `statusSegments` macOS uses for its marks — as
+        // text naming each provider ("Claude 37% · Codex 8%") rather than
+        // mark-plus-text. Naming the provider matters here more than it does
+        // on macOS: with only one provider signed in, a bare "8%" is
+        // indistinguishable from the other provider's reading, and a user
+        // signed out of Claude but into Codex could easily misread it as
+        // Claude's. `composedLabel` is the same composition `Win32Tray` uses
+        // for its tooltip, so both platforms name providers identically.
+        // Using `statusSegments` also means a provider with no value (not
+        // signed in) is dropped rather than shown as a permanent
+        // placeholder — e.g. a Codex-only user sees Codex's reading here,
+        // not an empty Claude dash forever.
         let segments = MenuModel.statusSegments(for: content.states)
-        let label = segments.map(\.text).joined(separator: " · ")
+        let label = MenuModel.composedLabel(for: segments)
         // The second argument is a *width guide*, not a max-length truncator
-        // — too narrow and the host can clip the real label. One "100%" per
-        // segment, joined the same way, is always at least as wide as what
-        // is actually shown.
-        let guide = Array(repeating: "100%", count: segments.count).joined(separator: " · ")
+        // — too narrow and the host can clip the real label. Built from the
+        // same segments with each reading forced to "100%", through the same
+        // `composedLabel` composition, so the guide is always at least as
+        // wide as the real label — including the provider name's width, not
+        // just the percentage's.
+        let guideSegments = segments.map { segment in
+            StatusSegment(
+                provider: segment.provider, text: "100%",
+                percent: segment.percent, isCritical: segment.isCritical, isStale: segment.isStale
+            )
+        }
+        let guide = MenuModel.composedLabel(for: guideSegments)
         app_indicator_set_label(indicator, label, guide)
 
         // Never swap the menu out from under the user while it is open. The

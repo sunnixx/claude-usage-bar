@@ -42,12 +42,25 @@ public struct MenuRow: Equatable, Sendable {
 }
 
 /// One provider's contribution to the menu bar item.
+///
+/// `provider` is `nil` only for the "no provider has a value" placeholder
+/// `statusSegments` returns when nobody is signed in to anything: there is no
+/// provider to name, and attributing that placeholder to either provider
+/// would falsely imply that specific one is what's unavailable.
 public struct StatusSegment: Equatable, Sendable {
-    public let provider: Provider
+    public let provider: Provider?
     public let text: String
     public let percent: Int?
     public let isCritical: Bool
     public let isStale: Bool
+
+    public init(provider: Provider?, text: String, percent: Int?, isCritical: Bool, isStale: Bool) {
+        self.provider = provider
+        self.text = text
+        self.percent = percent
+        self.isCritical = isCritical
+        self.isStale = isStale
+    }
 }
 
 /// Turns poller state into the exact strings the macOS and Linux tray
@@ -75,7 +88,7 @@ public enum MenuModel {
 
     public static func rows(
         for state: UsageState,
-        provider: Provider = .anthropic,
+        provider: Provider,
         now: Date,
         calendar: Calendar,
         locale: Locale,
@@ -90,7 +103,14 @@ public enum MenuModel {
         case .unauthorized:
             return [MenuRow(label: "Token expired — open \(cli) to refresh")]
         case .unreachable:
-            return [MenuRow(label: "Can't reach Anthropic")]
+            // Naming the *service* we couldn't reach, not the *CLI* — `cli`
+            // above is "Claude Code" / "Codex", but the thing that failed
+            // here is the API call (api.anthropic.com / the ChatGPT backend),
+            // not the CLI. Getting this wrong is exactly the defect class
+            // this project has hit before: the right message under the
+            // wrong provider's name.
+            let service = provider == .anthropic ? "Anthropic" : "OpenAI"
+            return [MenuRow(label: "Can't reach \(service)")]
         case .tokenStoreUnavailable:
             #if os(macOS)
             return [MenuRow(label: "Keychain access denied — allow in Keychain Access")]
@@ -123,13 +143,31 @@ public enum MenuModel {
         }
 
         guard segments.isEmpty else { return segments }
+        // Markless and providerless: attributing this to either provider
+        // would falsely imply that specific one is what's unavailable, when
+        // neither has a value. See `AppKitTray.renderTitle`, which skips
+        // drawing a mark for a `nil` provider.
         return [StatusSegment(
-            provider: states.first?.0 ?? .anthropic,
+            provider: nil,
             text: Formatting.percentText(nil),
             percent: nil,
             isCritical: false,
             isStale: false
         )]
+    }
+
+    /// Composes each segment's provider name and reading into a single
+    /// string, e.g. "Claude 37% · Codex 8%" — shared by the Linux menu-bar
+    /// label (`AppIndicatorTray`) and the Windows tray tooltip (`Win32Tray`)
+    /// so both name providers identically rather than each writing its own
+    /// composition. A segment with no provider (the neither-signed-in
+    /// placeholder from `statusSegments`) contributes just its text, since
+    /// there is no provider name to attach.
+    public static func composedLabel(for segments: [StatusSegment]) -> String {
+        segments.map { segment in
+            guard let provider = segment.provider else { return segment.text }
+            return "\(provider.displayName) \(segment.text)"
+        }.joined(separator: " · ")
     }
 
     public static func rows(

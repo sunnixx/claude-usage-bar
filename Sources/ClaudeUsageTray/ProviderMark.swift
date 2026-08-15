@@ -9,7 +9,25 @@ import ClaudeUsageCore
 /// artwork to license or keep in sync. These are recognisable renditions, not
 /// pixel-exact logos.
 enum ProviderMark {
+    /// `renderTitle` calls `image(for:)` once per configured provider on
+    /// every publish — roughly twice a minute per provider, ~2,880 times a
+    /// day for two providers — and the mark itself never changes once drawn.
+    /// Rasterising it fresh each time was pure waste with no correctness
+    /// upside, so each provider's `NSImage` is built exactly once and reused;
+    /// `NSImage` is immutable after construction here (nothing ever mutates
+    /// the cached instances), so sharing one across every render is safe.
+    private static let images: [Provider: NSImage] = [
+        .anthropic: makeImage(for: .anthropic),
+        .codex: makeImage(for: .codex),
+    ]
+
     static func image(for provider: Provider) -> NSImage {
+        // Force-unwrap is safe: `images` is populated for every `Provider`
+        // case above, and `Provider` is a closed enum only this module edits.
+        images[provider]!
+    }
+
+    private static func makeImage(for provider: Provider) -> NSImage {
         let size = NSSize(width: 14, height: 14)
         let image = NSImage(size: size, flipped: false) { rect in
             NSColor.black.setStroke()

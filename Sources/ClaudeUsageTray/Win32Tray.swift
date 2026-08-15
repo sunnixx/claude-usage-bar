@@ -329,7 +329,7 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         var data = notifyData()
         data.uFlags = UINT(NIF_ICON) | UINT(NIF_TIP)
         data.hIcon = fresh
-        fill(tip: Self.tooltip(for: segments), into: &data)
+        fill(tip: MenuModel.composedLabel(for: segments), into: &data)
         _ = Shell_NotifyIconW(DWORD(NIM_MODIFY), &data)
 
         // Replace only after the shell has taken the new one, then free the old
@@ -351,20 +351,18 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         data.uCallbackMessage = kTrayMessage
         data.hIcon = icon
         if let shown {
-            fill(tip: Self.tooltip(for: MenuModel.statusSegments(for: shown.states)), into: &data)
+            fill(tip: MenuModel.composedLabel(for: MenuModel.statusSegments(for: shown.states)), into: &data)
         }
         _ = Shell_NotifyIconW(DWORD(NIM_ADD), &data)
     }
 
-    /// Composes the tooltip from every provider with an actual value —
-    /// `segments` already comes from `MenuModel.statusSegments`, which drops
-    /// providers with no value, so a signed-out provider is simply absent
-    /// here rather than shown as an empty placeholder. e.g. "Claude 37% ·
-    /// Codex 8%", or just "Codex 8%" if only Codex is signed in. Well under
-    /// `szTip`'s 128-UTF-16-unit limit for any realistic provider count.
-    private static func tooltip(for segments: [StatusSegment]) -> String {
-        segments.map { "\($0.provider.displayName) \($0.text)" }.joined(separator: " · ")
-    }
+    // The tooltip is composed via `MenuModel.composedLabel`, shared with the
+    // Linux menu-bar label in `AppIndicatorTray` — see its doc comment.
+    // `composedLabel` names every provider with an actual value (a
+    // signed-out provider is simply absent, per `statusSegments`), e.g.
+    // "Claude 37% · Codex 8%", or just "Codex 8%" if only Codex is signed
+    // in. Well under `szTip`'s 128-UTF-16-unit limit for any realistic
+    // provider count.
 
     private func showMenu() {
         let content = shown
