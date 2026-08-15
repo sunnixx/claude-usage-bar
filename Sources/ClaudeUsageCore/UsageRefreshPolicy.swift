@@ -7,8 +7,9 @@ public enum UsageState: Equatable, Sendable {
     case noToken
     case unauthorized
     case unreachable
-    /// Keychain lookup failed (denied prompt, locked keychain, corrupt item)
-    /// and there is no prior good value to fall back on.
+    /// The token store threw (denied prompt, locked keychain, unreadable or
+    /// malformed credentials file) and there is no prior good value to fall
+    /// back on.
     case tokenStoreUnavailable
 
     /// The percentage shown in the menu bar, if there is one.

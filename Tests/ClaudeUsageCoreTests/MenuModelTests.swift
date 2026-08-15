@@ -134,6 +134,10 @@ import Testing
         #expect(rows(.noToken, now: now) == ["Not signed in to Claude Code"])
         #expect(rows(.unauthorized, now: now) == ["Token expired — open Claude Code to refresh"])
         #expect(rows(.unreachable, now: now) == ["Can't reach Anthropic"])
+        #if os(macOS)
         #expect(rows(.tokenStoreUnavailable, now: now) == ["Keychain access denied — allow in Keychain Access"])
+        #else
+        #expect(rows(.tokenStoreUnavailable, now: now) == ["Can't read Claude Code credentials"])
+        #endif
     }
 }
