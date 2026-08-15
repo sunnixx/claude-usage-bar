@@ -354,23 +354,22 @@ Replace the row-text assertions in `Tests/ClaudeUsageCoreTests/MenuModelTests.sw
 
 ```swift
 @Test func buildsStructuredRowsForASnapshot() throws {
-    let state = UsageState.loaded(Fixture.snapshot)
     let rows = MenuModel.rows(
-        for: state, now: Fixture.now,
-        calendar: .current, locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt
+        for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+        calendar: calendar, locale: locale, timeZone: utc
     )
 
     let session = try #require(rows.first)
     #expect(session.label == "Session (5h)")
     #expect(session.percent == 37)
-    #expect(session.bar == "▓▓▓▓░░░░░░")
+    #expect(session.bar == "\u{2593}\u{2593}\u{2593}\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}")
     #expect(session.isIndented == false)
 }
 
 @Test func marksScopedRowsAsIndented() throws {
     let rows = MenuModel.rows(
-        for: .loaded(Fixture.snapshot), now: Fixture.now,
-        calendar: .current, locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt
+        for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+        calendar: calendar, locale: locale, timeZone: utc
     )
     let scoped = try #require(rows.first { $0.isIndented })
     #expect(scoped.label == "Fable")
@@ -379,8 +378,8 @@ Replace the row-text assertions in `Tests/ClaudeUsageCoreTests/MenuModelTests.sw
 
 @Test func messageRowsCarryOnlyALabel() throws {
     let rows = MenuModel.rows(
-        for: .noToken, now: Fixture.now,
-        calendar: .current, locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt
+        for: .noToken, now: try date("2026-08-04T07:48:00Z"),
+        calendar: calendar, locale: locale, timeZone: utc
     )
     let row = try #require(rows.first)
     #expect(row.label == "Not signed in to Claude Code")
@@ -391,30 +390,47 @@ Replace the row-text assertions in `Tests/ClaudeUsageCoreTests/MenuModelTests.sw
 
 @Test func composesAMonospaceLineWithAlignedColumns() {
     let plain = MenuRow(label: "This week", percent: 26,
-                        bar: "▓▓▓░░░░░░░", reset: "resets Sat, Aug 8")
+                        bar: "\u{2593}\u{2593}\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}", reset: "resets Sat, Aug 8")
     let indented = MenuRow(label: "Fable", percent: 10,
-                           bar: "▓░░░░░░░░░", reset: nil, isIndented: true)
+                           bar: "\u{2593}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}\u{2591}", reset: nil, isIndented: true)
 
     let a = MenuModel.monospaceLine(plain)
     let b = MenuModel.monospaceLine(indented)
 
-    // The percent sign and the bar must sit at the same index on both rows —
+    // The percent sign and the bar must sit at the same index on both rows --
     // the indent is absorbed by the label field, not prepended afterwards.
     #expect(a.distance(from: a.startIndex, to: a.firstIndex(of: "%")!) == 17)
     #expect(b.distance(from: b.startIndex, to: b.firstIndex(of: "%")!) == 17)
-    #expect(a.distance(from: a.startIndex, to: a.firstIndex(of: "▓")!) == 20)
-    #expect(b.distance(from: b.startIndex, to: b.firstIndex(of: "▓")!) == 20)
+    #expect(a.distance(from: a.startIndex, to: a.firstIndex(of: "\u{2593}")!) == 20)
+    #expect(b.distance(from: b.startIndex, to: b.firstIndex(of: "\u{2593}")!) == 20)
 }
 
-@Test func statusTitleCarriesTheRawPercent() {
-    let title = MenuModel.statusTitle(for: .loaded(Fixture.snapshot))
+@Test func statusTitleCarriesTheRawPercent() throws {
+    let title = MenuModel.statusTitle(for: .loaded(try loadedSnapshot()))
     #expect(title.percent == 37)
-    #expect(title.text == "◔ 37%")
+    // The gauge glyph is the status item's template image, not part of this
+    // string -- do not add it here.
+    #expect(title.text == "37%")
 }
 
 @Test func statusTitlePercentIsNilWithoutAValue() {
     #expect(MenuModel.statusTitle(for: .noToken).percent == nil)
 }
+```
+
+These tests use the suite's existing private helpers (`calendar`, `locale`,
+`utc`, `date(_:)`, `loadedSnapshot()`), which are already defined at the top of
+`MenuModelTests.swift`. There is no `Fixture.snapshot` — `Fixture` exposes only
+`data(_:)`.
+
+Also update the existing `rows(_:now:)` helper in this suite, which currently
+maps `\.text`:
+
+```swift
+    private func rows(_ state: UsageState, now: Date) -> [String] {
+        MenuModel.rows(for: state, now: now, calendar: calendar, locale: locale, timeZone: utc)
+            .map(MenuModel.monospaceLine)
+    }
 ```
 
 - [ ] **Step 2: Run to verify they fail**
@@ -905,18 +921,46 @@ Put today's AppKit code behind the protocol the other two platforms will impleme
 The tray itself is not unit-testable, but the content the driver hands it is. Create `Tests/ClaudeUsageCoreTests/TrayContentTests.swift`:
 
 ```swift
-import ClaudeUsageCore
 import Foundation
 import Testing
+@testable import ClaudeUsageCore
 
 @Suite struct TrayContentTests {
-    @Test func buildsContentFromStateAndLoginFlag() {
-        let title = MenuModel.statusTitle(for: .loaded(Fixture.snapshot))
-        let rows = MenuModel.rows(
-            for: .loaded(Fixture.snapshot), now: Fixture.now,
-            calendar: .current, locale: Locale(identifier: "en_US_POSIX"), timeZone: .gmt
+    private let utc = TimeZone(identifier: "UTC")!
+    private let locale = Locale(identifier: "en_US_POSIX")
+
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = utc
+        calendar.locale = locale
+        return calendar
+    }
+
+    private func snapshot() throws -> UsageSnapshot {
+        UsageSnapshot(
+            session: UsageWindow(
+                percent: 37,
+                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
+            ),
+            week: UsageWindow(
+                percent: 26,
+                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-08T07:00:00Z"))
+            ),
+            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: nil)],
+            fetchedAt: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z"))
         )
-        let content = TrayContent(title: title, rows: rows, loginItemEnabled: true)
+    }
+
+    @Test func buildsContentFromStateAndLoginFlag() throws {
+        let state = UsageState.loaded(try snapshot())
+        let content = TrayContent(
+            title: MenuModel.statusTitle(for: state),
+            rows: MenuModel.rows(
+                for: state, now: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z")),
+                calendar: calendar, locale: locale, timeZone: utc
+            ),
+            loginItemEnabled: true
+        )
 
         #expect(content.title.percent == 37)
         #expect(content.loginItemEnabled)
@@ -924,6 +968,9 @@ import Testing
     }
 }
 ```
+
+There is no `Fixture.snapshot` — `Fixture` exposes only `data(_:)`, so this
+suite builds its own snapshot the way `MenuModelTests` does.
 
 `TrayContent` must therefore live in `ClaudeUsageCore`, not `ClaudeUsageTray` — it is a value type with no platform dependency, and putting it in the core is what makes it testable everywhere.
 
@@ -1396,17 +1443,32 @@ targets.append(
 #endif
 ```
 
-Change the tray target so it picks the shim up only on Linux:
+Change the tray target so it picks the shim up only on Linux. The dependency
+must be added inside the same `#if os(Linux)` block that appends the target —
+naming `CAppIndicator` in the dependency list on macOS is an unresolvable target
+reference and breaks manifest loading for the primary platform, even with a
+`.when(platforms:)` condition. Replace the flat `ClaudeUsageTray` entry with:
 
 ```swift
-    .target(
-        name: "ClaudeUsageTray",
-        dependencies: [
-            "ClaudeUsageCore",
-            .target(name: "CAppIndicator", condition: .when(platforms: [.linux])),
-        ]
-    ),
+var trayDependencies: [Target.Dependency] = ["ClaudeUsageCore"]
+
+#if os(Linux)
+trayDependencies.append("CAppIndicator")
+targets.append(
+    .systemLibrary(
+        name: "CAppIndicator",
+        path: "Sources/CAppIndicator",
+        pkgConfig: "ayatana-appindicator3-0.1",
+        providers: [.apt(["libayatana-appindicator3-dev", "libgtk-3-dev"])]
+    )
+)
+#endif
+
+targets.append(.target(name: "ClaudeUsageTray", dependencies: trayDependencies))
 ```
+
+This replaces the `.systemLibrary` snippet shown in the previous step — add it
+once, here, rather than in two places.
 
 And extend the executable guard from `#if os(macOS)` to `#if os(macOS) || os(Linux)`.
 
@@ -2002,8 +2064,9 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         defer { _ = DestroyMenu(menu) }
 
         for row in content.rows {
-            let line = MenuModel.monospaceLine(row)
-            _ = AppendMenuW(menu, UINT(MF_STRING) | UINT(MF_GRAYED), 0, line.wide)
+            // Win32 menus use the system proportional font, so the padded
+            // monospace line would render ragged. Compose from the fields.
+            _ = AppendMenuW(menu, UINT(MF_STRING) | UINT(MF_GRAYED), 0, Self.line(row).wide)
         }
         _ = AppendMenuW(menu, UINT(MF_SEPARATOR), 0, nil)
         _ = AppendMenuW(
@@ -2025,6 +2088,15 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
             menu, UINT(TPM_RIGHTBUTTON), point.x, point.y, 0, window, nil
         )
         _ = PostMessageW(window, UINT(WM_NULL), 0, 0)
+    }
+
+    /// Windows lays the fields out for a proportional font rather than using
+    /// `MenuModel.monospaceLine`, which is built for a fixed-width menu.
+    static func line(_ row: MenuRow) -> String {
+        var parts: [String] = [row.isIndented ? "    \(row.label)" : row.label]
+        if let percent = row.percent { parts.append("\(percent)%") }
+        if let reset = row.reset { parts.append(reset) }
+        return parts.joined(separator: "   ")
     }
 
     private func notifyData() -> NOTIFYICONDATAW {
@@ -2164,8 +2236,8 @@ Add to `README.md` under Build:
     swift build -c release
 
 The tray shows the percentage drawn into the icon, because the Windows
-notification area has no text field beside an icon — the full `◔ 37%` is in
-the tooltip. Right-click the icon for the menu.
+notification area has no text field beside an icon. The tooltip carries the
+same reading. Right-click the icon for the menu.
 
 The token is read from `%USERPROFILE%\.claude\.credentials.json` (or
 `%CLAUDE_CONFIG_DIR%`), read-only.
