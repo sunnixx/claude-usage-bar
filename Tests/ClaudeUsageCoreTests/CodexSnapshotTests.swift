@@ -50,6 +50,46 @@ import Testing
         }
     }
 
+    // Schema drift is distinct from a syntax error: every field in `Payload`
+    // is Optional (deliberately, so plan-dependent fields can come and go),
+    // which means a shape change decodes "successfully" unless `decode`
+    // explicitly rejects an empty window list.
+
+    @Test func throwsOnAnEmptyObjectRatherThanReturningAZeroedSnapshot() {
+        #expect(throws: (any Error).self) {
+            try CodexSnapshot.decode(from: Data("{}".utf8), fetchedAt: fetched)
+        }
+    }
+
+    @Test func throwsWhenTheRateLimitKeyIsRenamed() {
+        let json = """
+        {
+          "plan_type": "pro",
+          "rate_limits": {
+            "primary_window": { "used_percent": 42, "limit_window_seconds": 18000, "reset_at": 1789416863 }
+          }
+        }
+        """
+        #expect(throws: (any Error).self) {
+            try CodexSnapshot.decode(from: Data(json.utf8), fetchedAt: fetched)
+        }
+    }
+
+    @Test func throwsWhenThePrimaryWindowHasNoUsedPercent() {
+        let json = """
+        {
+          "plan_type": "pro",
+          "rate_limit": {
+            "primary_window": { "used_percent": null, "limit_window_seconds": 18000, "reset_at": 1789416863 },
+            "secondary_window": null
+          }
+        }
+        """
+        #expect(throws: (any Error).self) {
+            try CodexSnapshot.decode(from: Data(json.utf8), fetchedAt: fetched)
+        }
+    }
+
     @Test func carriesNoPersonallyIdentifyingInformation() throws {
         // The response contains email, user_id and account_id. None of it may
         // survive decoding — the app has no use for it and must not hold it.

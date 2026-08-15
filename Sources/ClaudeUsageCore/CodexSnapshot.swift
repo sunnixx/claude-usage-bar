@@ -24,6 +24,17 @@ public enum CodexSnapshot {
             windows.append(window)
         }
 
+        guard !windows.isEmpty else {
+            // A usage response with no windows is not a usage response. Every
+            // field above is Optional so a schema change (renamed keys, a
+            // window with no used_percent) decodes "successfully" into
+            // nothing rather than throwing. The endpoint is undocumented, so
+            // treat that shape drift as a decoding failure — the refresh
+            // policy then retains the last good value as stale instead of
+            // blanking the readout.
+            throw CodexDecodingError.noWindows
+        }
+
         return ProviderSnapshot(
             provider: .codex,
             planName: payload.plan_type,
@@ -42,14 +53,23 @@ public enum CodexSnapshot {
         )
     }
 
-    /// Codex window durations are plan-dependent — a free plan reports one
-    /// 30-day window, paid plans report a 5-hour and a weekly one — so labels
-    /// are derived from the duration rather than hardcoded.
+    /// Codex window durations are plan-dependent, so labels are derived from
+    /// the duration rather than hardcoded. Only the free plan's shape — a
+    /// single 30-day window — has been observed live; the paid-plan shape (a
+    /// 5-hour primary and a weekly secondary) is inferred from the Codex
+    /// source and encoded in the `codex-full` fixture, not confirmed live.
     static func windowLabel(seconds: Int) -> String {
         if seconds == 604_800 { return "This week" }
         if seconds >= 86_400, seconds % 86_400 == 0 { return "\(seconds / 86_400) days" }
         return "\(max(1, Int((Double(seconds) / 3600).rounded(.up))))h"
     }
+}
+
+/// Thrown when a syntactically valid Codex response decodes to no usable
+/// windows — the "shape changed" case that all-optional fields would
+/// otherwise let through as a silently empty, but "successful", snapshot.
+enum CodexDecodingError: Error, Equatable {
+    case noWindows
 }
 
 extension CodexSnapshot {
