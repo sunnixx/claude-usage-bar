@@ -29,4 +29,16 @@ struct Win32MenuLineTests {
 
         #expect(line == "Loading…")
     }
+
+    /// A section header row (`isSectionHeader`) carries no percent, bar or
+    /// reset — same shape as a message-only row — so it must pass through
+    /// `compose` as its bare label, unchanged, with no stray padding or
+    /// separators. This is what lets `Win32Tray.showMenu` add it with plain
+    /// `MF_STRING | MF_GRAYED` and no special-casing.
+    @Test func sectionHeaderRowPassesThroughUnchanged() {
+        let row = MenuRow(label: "CODEX · Free", isSectionHeader: true)
+        let line = Win32MenuLine.compose(row)
+
+        #expect(line == "CODEX · Free")
+    }
 }

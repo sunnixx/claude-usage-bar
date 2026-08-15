@@ -13,32 +13,23 @@ public protocol LoginItemControlling: Sendable {
 /// threads freely and be asserted on in tests.
 public struct TrayContent: Equatable, Sendable {
     /// One entry per configured provider, in `Provider.allCases` order, so the
-    /// menu bar and dropdown never reorder between updates.
+    /// menu bar and dropdown never reorder between updates. Every tray backend
+    /// derives its title/icon and its dropdown rows from this directly, via
+    /// `MenuModel`, at render time — nothing here is pre-rendered for a
+    /// specific platform.
     public let states: [(Provider, UsageState)]
-    /// Transitional: mirrors the first (Anthropic) provider's title/rows
-    /// exactly as before `states` existed, so every tray backend keeps
-    /// compiling and behaving identically until Task 7 teaches them to render
-    /// `states` directly and these two fields are removed.
-    public let title: StatusTitle
-    public let rows: [MenuRow]
     public let loginItemEnabled: Bool
 
     public init(
         states: [(Provider, UsageState)],
-        title: StatusTitle,
-        rows: [MenuRow],
         loginItemEnabled: Bool
     ) {
         self.states = states
-        self.title = title
-        self.rows = rows
         self.loginItemEnabled = loginItemEnabled
     }
 
     public static func == (lhs: TrayContent, rhs: TrayContent) -> Bool {
-        lhs.title == rhs.title
-            && lhs.rows == rhs.rows
-            && lhs.loginItemEnabled == rhs.loginItemEnabled
+        lhs.loginItemEnabled == rhs.loginItemEnabled
             && lhs.states.count == rhs.states.count
             && zip(lhs.states, rhs.states).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 }
     }

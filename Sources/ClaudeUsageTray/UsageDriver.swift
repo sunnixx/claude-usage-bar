@@ -291,20 +291,8 @@ public final class UsageDriver: @unchecked Sendable {
         let states: [(Provider, UsageState)] = withLock {
             clients.map { provider, _ in (provider, policies[provider]?.state ?? .loading) }
         }
-        // Transitional: mirrors the first (Anthropic) provider's reading,
-        // exactly as the old single-provider driver published it, until
-        // Task 7 replaces these fields with multi-provider rendering.
-        let primaryState = states.first?.1 ?? .loading
 
-        let content = TrayContent(
-            states: states,
-            title: MenuModel.statusTitle(for: primaryState),
-            rows: MenuModel.rows(
-                for: primaryState, now: Date(),
-                calendar: .current, locale: .current, timeZone: .current
-            ),
-            loginItemEnabled: loginItem.isEnabled
-        )
+        let content = TrayContent(states: states, loginItemEnabled: loginItem.isEnabled)
 
         if !force, let last = lastPublishedState, last == content {
             return

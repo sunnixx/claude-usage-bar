@@ -300,15 +300,20 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     private func render(_ content: TrayContent?) {
         guard let content else { return }
 
+        // The 32x32 icon has room for one number, so — same as before Codex
+        // existed — it shows the first configured provider's reading; the
+        // tooltip echoes the same text. Both providers' readings are fully
+        // visible in the dropdown's per-provider sections.
+        let title = MenuModel.statusTitle(for: content.states.first?.1 ?? .loading)
         let fresh = Win32Icon.make(
-            percent: content.title.percent,
-            critical: content.title.isCritical,
-            stale: content.title.isStale
+            percent: title.percent,
+            critical: title.isCritical,
+            stale: title.isStale
         )
         var data = notifyData()
         data.uFlags = UINT(NIF_ICON) | UINT(NIF_TIP)
         data.hIcon = fresh
-        fill(tip: content.title.text, into: &data)
+        fill(tip: title.text, into: &data)
         _ = Shell_NotifyIconW(DWORD(NIM_MODIFY), &data)
 
         // Replace only after the shell has taken the new one, then free the old
@@ -329,7 +334,10 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         data.uFlags = UINT(NIF_ICON) | UINT(NIF_MESSAGE) | UINT(NIF_TIP)
         data.uCallbackMessage = kTrayMessage
         data.hIcon = icon
-        if let shown { fill(tip: shown.title.text, into: &data) }
+        if let shown {
+            let title = MenuModel.statusTitle(for: shown.states.first?.1 ?? .loading)
+            fill(tip: title.text, into: &data)
+        }
         _ = Shell_NotifyIconW(DWORD(NIM_ADD), &data)
     }
 
@@ -338,9 +346,17 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         guard let content, let window, let menu = CreatePopupMenu() else { return }
         defer { _ = DestroyMenu(menu) }
 
-        for row in content.rows {
+        let rows = MenuModel.rows(
+            for: content.states, now: Date(),
+            calendar: .current, locale: .current, timeZone: .current
+        )
+        for row in rows {
             // Win32 menus use the system proportional font, so the padded
             // monospace line would render ragged. Compose from the fields.
+            // A section header has no percent, bar or reset, so
+            // `Win32MenuLine.compose` already passes it through unchanged as
+            // its bare (already uppercased, by `MenuModel`) label — see
+            // `Win32MenuLineTests`.
             _ = AppendMenuW(menu, UINT(MF_STRING) | UINT(MF_GRAYED), 0, Self.line(row).wide)
         }
         _ = AppendMenuW(menu, UINT(MF_SEPARATOR), 0, nil)

@@ -186,8 +186,13 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
 
     private func render(_ content: TrayContent) {
         // The label is the only place the percentage can appear; the icon is a
-        // fixed themed glyph.
-        app_indicator_set_label(indicator, content.title.text, "100%")
+        // fixed themed glyph. Unlike the macOS status item, the indicator
+        // label is plain text with no room for per-provider marks, so it
+        // shows the first configured provider's reading only — same as this
+        // backend showed before Codex existed. Segments do show fully in the
+        // dropdown below, in the per-provider sections.
+        let title = MenuModel.statusTitle(for: content.states.first?.1 ?? .loading)
+        app_indicator_set_label(indicator, title.text, "100%")
 
         // Never swap the menu out from under the user while it is open. The
         // "show" handler connected below fires INSIDE the very signal
@@ -210,8 +215,26 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
 
         let menu = gtk_menu_new()
 
-        for row in content.rows {
+        let rows = MenuModel.rows(
+            for: content.states, now: Date(),
+            calendar: .current, locale: .current, timeZone: .current
+        )
+        for (index, row) in rows.enumerated() {
+            // A per-provider section heading gets a blank line above it, so
+            // the sections read as visually distinct groups — except the
+            // very first row, where a leading blank line would just be a gap
+            // at the top of the menu.
+            if row.isSectionHeader && index != 0 {
+                let spacer = gtk_menu_item_new()
+                let spacerLabel = gtk_label_new("")
+                gtk_container_add(gcast(spacer), spacerLabel)
+                gtk_widget_set_sensitive(spacer, 0)
+                gtk_menu_shell_append(gcast(menu), spacer)
+            }
+
             // Pango <tt> keeps the columns aligned in a proportional menu font.
+            // `MenuModel.monospaceLine` already renders a section header (no
+            // percent, bar or reset) as its bare label through this same path.
             let markup = "<tt>\(escapeMarkup(MenuModel.monospaceLine(row)))</tt>"
             let item = gtk_menu_item_new()
             let label = gtk_label_new(nil)

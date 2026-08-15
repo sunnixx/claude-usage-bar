@@ -19,10 +19,15 @@ let loginItem: any LoginItemControlling = WindowsLoginItem()
 #error("Unsupported platform.")
 #endif
 
-// Task 7 adds Codex to this list; for now only Anthropic is wired.
+// `CodexTokenStore()` needs no platform guard: unlike the Anthropic token,
+// which lives in the macOS Keychain, Codex's credential is always a file
+// (`~/.codex/auth.json`, or `$CODEX_HOME`) on every platform.
 let driver = UsageDriver(
     tray: tray,
-    clients: [(.anthropic, UsageClient(tokens: tokens))],
+    clients: [
+        (.anthropic, UsageClient(tokens: tokens)),
+        (.codex, CodexClient(tokens: CodexTokenStore())),
+    ],
     loginItem: loginItem
 )
 driver.start()
