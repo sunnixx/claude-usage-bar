@@ -79,7 +79,7 @@ import Testing
         ])
 
         #expect(result[0].others.map(\.label) == ["This week", "Fable"])
-        #expect(result[0].others.map(\.isScoped) == [false, true])
+        #expect(result[0].others.map(\.isIndented) == [false, true])
     }
 
     @Test func carriesThePlanNameWhenTheProviderReportsOne() throws {
@@ -111,7 +111,8 @@ import Testing
             ]))),
         ])
 
-        #expect(result[0].status == "06:31")
+        // A bare time says nothing about what it is the time of.
+        #expect(result[0].status == "Last updated 06:31")
     }
 
     @Test func namesTheCauseWhenStaleRatherThanJustATime() throws {
@@ -126,8 +127,7 @@ import Testing
         ])
 
         let status = try #require(result[0].status)
-        #expect(status.contains("Rate limited"))
-        #expect(status.contains("06:31"))
+        #expect(status == "Rate limited · last updated 06:31")
     }
 
     // MARK: - Error states

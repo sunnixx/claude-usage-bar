@@ -12,9 +12,13 @@ public struct ProviderSection: Equatable, Sendable {
     /// The window that gates you soonest — the card's large number. Selected by
     /// role, never by position: showing a weekly figure where the session figure
     /// belongs would be a wrong number under a right label.
-    public let hero: UsageWindow?
+    ///
+    /// A `MenuRow` rather than a `UsageWindow` so the card reuses the same
+    /// tested reset formatting every other surface uses, instead of re-deriving
+    /// it from a date inside the view.
+    public let hero: MenuRow?
     /// Everything else, in the order the provider reported it.
-    public let others: [UsageWindow]
+    public let others: [MenuRow]
     /// "06:31" when loaded, or "Rate limited · 06:31" when stale — the cause,
     /// not just a time. Nil when there is no data at all.
     public let status: String?
@@ -25,8 +29,8 @@ public struct ProviderSection: Equatable, Sendable {
     public init(
         provider: Provider,
         planName: String?,
-        hero: UsageWindow?,
-        others: [UsageWindow],
+        hero: MenuRow?,
+        others: [MenuRow],
         status: String?,
         message: String?
     ) {
@@ -54,11 +58,22 @@ extension MenuModel {
         states.map { provider, state in
             switch state {
             case .loaded(let snapshot), .stale(let snapshot, _, _):
+                func row(_ window: UsageWindow) -> MenuRow {
+                    MenuRow(
+                        label: window.label,
+                        percent: window.percent,
+                        bar: Formatting.progressBar(percent: window.percent),
+                        reset: Formatting.resetDescription(
+                            window.resetsAt, now: now, calendar: calendar, locale: locale
+                        ),
+                        isIndented: window.isScoped
+                    )
+                }
                 return ProviderSection(
                     provider: provider,
                     planName: snapshot.planName,
-                    hero: snapshot.windows.first { $0.role == .primary },
-                    others: snapshot.windows.filter { $0.role != .primary },
+                    hero: snapshot.windows.first { $0.role == .primary }.map(row),
+                    others: snapshot.windows.filter { $0.role != .primary }.map(row),
                     status: statusText(for: state, locale: locale, timeZone: timeZone),
                     message: nil
                 )
@@ -89,10 +104,13 @@ extension MenuModel {
     ) -> String? {
         switch state {
         case .loaded(let snapshot):
-            return Formatting.clockTime(snapshot.fetchedAt, locale: locale, timeZone: timeZone)
+            let time = Formatting.clockTime(snapshot.fetchedAt, locale: locale, timeZone: timeZone)
+            return "Last updated \(time)"
         case .stale(_, let since, let reason):
+            // The reason leads, because it is why the number is old — but the
+            // time still needs saying what it is the time of.
             let time = Formatting.clockTime(since, locale: locale, timeZone: timeZone)
-            return "\(reason.rowText) · \(time)"
+            return "\(reason.rowText) · last updated \(time)"
         default:
             return nil
         }
