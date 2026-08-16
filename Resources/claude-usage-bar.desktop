@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Claude Usage Bar
-Comment=Claude subscription usage in the system tray
-Exec=claude-usage-bar
-Icon=utilities-system-monitor
-Categories=Utility;
-Terminal=false

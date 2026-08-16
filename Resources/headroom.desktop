@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Headroom
+Comment=Claude subscription usage in the system tray
+Exec=headroom
+Icon=utilities-system-monitor
+Categories=Utility;
+Terminal=false

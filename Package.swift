@@ -2,16 +2,16 @@
 import PackageDescription
 
 var targets: [Target] = [
-    .target(name: "ClaudeUsageCore"),
-    .target(name: "ClaudeUsageTokens", dependencies: ["ClaudeUsageCore"]),
+    .target(name: "HeadroomCore"),
+    .target(name: "HeadroomTokens", dependencies: ["HeadroomCore"]),
     .testTarget(
-        name: "ClaudeUsageCoreTests",
-        dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens"],
+        name: "HeadroomCoreTests",
+        dependencies: ["HeadroomCore", "HeadroomTokens"],
         resources: [.copy("Fixtures")]
     ),
     .testTarget(
-        name: "ClaudeUsageTrayTests",
-        dependencies: ["ClaudeUsageCore", "ClaudeUsageTray"]
+        name: "HeadroomTrayTests",
+        dependencies: ["HeadroomCore", "HeadroomTray"]
     ),
 ]
 
@@ -20,7 +20,7 @@ var targets: [Target] = [
 // dependency list on macOS is an unresolvable target reference and breaks
 // manifest loading for the primary platform, even with a .when(platforms:)
 // condition.
-var trayDependencies: [Target.Dependency] = ["ClaudeUsageCore"]
+var trayDependencies: [Target.Dependency] = ["HeadroomCore"]
 
 #if os(Linux)
 trayDependencies.append("CAppIndicator")
@@ -34,17 +34,17 @@ targets.append(
 )
 #endif
 
-targets.append(.target(name: "ClaudeUsageTray", dependencies: trayDependencies))
+targets.append(.target(name: "HeadroomTray", dependencies: trayDependencies))
 
 targets.append(
     .executableTarget(
-        name: "ClaudeUsageBar",
-        dependencies: ["ClaudeUsageCore", "ClaudeUsageTokens", "ClaudeUsageTray"]
+        name: "Headroom",
+        dependencies: ["HeadroomCore", "HeadroomTokens", "HeadroomTray"]
     )
 )
 
 let package = Package(
-    name: "ClaudeUsageBar",
+    name: "Headroom",
     platforms: [.macOS(.v14)],
     targets: targets
 )
