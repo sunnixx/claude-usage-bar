@@ -20,7 +20,7 @@ public enum UsageError: Error, Equatable {
 }
 
 public protocol UsageFetching: Sendable {
-    func fetchUsage() async throws -> UsageSnapshot
+    func fetchUsage() async throws -> ProviderSnapshot
 }
 
 public struct UsageClient: UsageFetching {
@@ -61,7 +61,7 @@ public struct UsageClient: UsageFetching {
         self.transport = transport
     }
 
-    public func fetchUsage() async throws -> UsageSnapshot {
+    public func fetchUsage() async throws -> ProviderSnapshot {
         let lookup: TokenLookup
         do {
             lookup = try tokens.accessToken()

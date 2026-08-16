@@ -2,8 +2,8 @@ import Foundation
 
 public enum UsageState: Equatable, Sendable {
     case loading
-    case loaded(UsageSnapshot)
-    case stale(UsageSnapshot, since: Date)
+    case loaded(ProviderSnapshot)
+    case stale(ProviderSnapshot, since: Date, reason: StaleReason)
     case noToken
     case unauthorized
     case unreachable
@@ -15,10 +15,43 @@ public enum UsageState: Equatable, Sendable {
     /// The percentage shown in the menu bar, if there is one.
     public var displayPercent: Int? {
         switch self {
-        case .loaded(let snapshot), .stale(let snapshot, _):
-            return snapshot.session?.percent
+        case .loaded(let snapshot), .stale(let snapshot, _, _):
+            return snapshot.primary?.percent
         case .loading, .noToken, .unauthorized, .unreachable, .tokenStoreUnavailable:
             return nil
+        }
+    }
+}
+
+/// Why a retained value is stale. The row says so, because "Offline" is wrong
+/// when the app reached the server fine and was rate limited or sent something
+/// it could not parse.
+public enum StaleReason: Equatable, Sendable {
+    case offline
+    case rateLimited
+    case serverError
+    case badResponse
+    case credentials
+
+    public var rowText: String {
+        switch self {
+        case .offline: return "Offline"
+        case .rateLimited: return "Rate limited"
+        case .serverError: return "Server error"
+        case .badResponse: return "Unexpected response"
+        case .credentials: return "Can't read credentials"
+        }
+    }
+
+    init(_ error: UsageError) {
+        switch error {
+        case .transport: self = .offline
+        case .badStatus(429): self = .rateLimited
+        case .badStatus: self = .serverError
+        case .decoding: self = .badResponse
+        case .tokenStoreUnavailable: self = .credentials
+        // An unconfirmed auth failure is a rotation window, not a sign-out.
+        case .noToken, .unauthorized: self = .credentials
         }
     }
 }
@@ -34,7 +67,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
     public private(set) var state: UsageState = .loading
     public private(set) var interval: TimeInterval = UsageRefreshPolicy.baseInterval
 
-    private var lastSnapshot: UsageSnapshot?
+    private var lastSnapshot: ProviderSnapshot?
 
     /// Consecutive `.noToken` / `.unauthorized` results. Claude Code rotates
     /// the OAuth token roughly every 8 hours, rewriting the Keychain item; a
@@ -47,7 +80,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
 
     public init() {}
 
-    public mutating func record(success snapshot: UsageSnapshot) {
+    public mutating func record(success snapshot: ProviderSnapshot) {
         lastSnapshot = snapshot
         state = .loaded(snapshot)
         interval = Self.baseInterval
@@ -75,7 +108,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
              .unauthorized where isUnconfirmedAuthFailure:
             // Probably a rotation window. Hold the value; the next result decides.
             if let lastSnapshot {
-                state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt)
+                state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt, reason: StaleReason(failure))
             }
         case .noToken:
             // Confirmed: signing out invalidates the number entirely — drop it
@@ -88,7 +121,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
             state = .unauthorized
         case .transport, .badStatus, .decoding:
             if let lastSnapshot {
-                state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt)
+                state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt, reason: StaleReason(failure))
             } else {
                 state = .unreachable
             }
@@ -96,7 +129,7 @@ public struct UsageRefreshPolicy: Equatable, Sendable {
             // A denied prompt or locked keychain is transient — never treat it
             // like a sign-out. Retain the last good value if there is one.
             if let lastSnapshot {
-                state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt)
+                state = .stale(lastSnapshot, since: lastSnapshot.fetchedAt, reason: StaleReason(failure))
             } else {
                 state = .tokenStoreUnavailable
             }

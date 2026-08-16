@@ -11,6 +11,7 @@ import Testing
 private final class SpyTray: TrayBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var _updates: [TrayContent] = []
+    private var _forced: [Bool] = []
 
     var updates: [TrayContent] {
         lock.lock()
@@ -18,13 +19,22 @@ private final class SpyTray: TrayBackend, @unchecked Sendable {
         return _updates
     }
 
+    /// Parallel to `updates`: the `force` flag `UsageDriver.publish()` passed
+    /// alongside each corresponding `TrayContent`.
+    var forced: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _forced
+    }
+
     func run(handlers: TrayHandlers) -> Never {
         fatalError("SpyTray.run should never be called in UsageDriverTests")
     }
 
-    func update(_ content: TrayContent) {
+    func update(_ content: TrayContent, force: Bool) {
         lock.lock()
         _updates.append(content)
+        _forced.append(force)
         lock.unlock()
     }
 }
@@ -57,10 +67,10 @@ private final class StubLoginItem: LoginItemControlling, @unchecked Sendable {
 /// pending continuation are mutated from whichever task calls `fetchUsage()`.
 private actor GatedClient: UsageFetching {
     private(set) var callCount = 0
-    private var pendingFetch: CheckedContinuation<UsageSnapshot, Error>?
+    private var pendingFetch: CheckedContinuation<ProviderSnapshot, Error>?
     private var waiter: CheckedContinuation<Void, Never>?
 
-    func fetchUsage() async throws -> UsageSnapshot {
+    func fetchUsage() async throws -> ProviderSnapshot {
         callCount += 1
         return try await withCheckedThrowingContinuation { continuation in
             pendingFetch = continuation
@@ -78,7 +88,7 @@ private actor GatedClient: UsageFetching {
         }
     }
 
-    func release(with result: Result<UsageSnapshot, Error>) {
+    func release(with result: Result<ProviderSnapshot, Error>) {
         pendingFetch?.resume(with: result)
         pendingFetch = nil
     }
@@ -88,20 +98,23 @@ private actor GatedClient: UsageFetching {
 private actor FailingClient: UsageFetching {
     private(set) var callCount = 0
 
-    func fetchUsage() async throws -> UsageSnapshot {
+    func fetchUsage() async throws -> ProviderSnapshot {
         callCount += 1
         throw UsageError.transport
     }
 }
 
-private func sampleSnapshot() throws -> UsageSnapshot {
-    UsageSnapshot(
-        session: UsageWindow(
-            percent: 12,
-            resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
-        ),
-        week: nil,
-        scopedWeekly: [],
+private func sampleSnapshot() throws -> ProviderSnapshot {
+    ProviderSnapshot(
+        provider: .anthropic,
+        planName: nil,
+        windows: [
+            UsageWindow(
+                label: "Session (5h)", percent: 12,
+                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z")),
+                role: .primary
+            )
+        ],
         fetchedAt: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z"))
     )
 }
@@ -118,12 +131,12 @@ private func sampleSnapshot() throws -> UsageSnapshot {
     /// again afterwards so a later refresh isn't stuck no-op'ing forever.
     @Test func atMostOneFetchIsEverInFlight() async throws {
         let gated = GatedClient()
-        let driver = UsageDriver(tray: SpyTray(), client: gated, loginItem: StubLoginItem())
+        let driver = UsageDriver(tray: SpyTray(), clients: [(.anthropic, gated)], loginItem: StubLoginItem())
 
         async let concurrentRefreshes: Void = withTaskGroup(of: Void.self) { group in
-            group.addTask { await driver.refresh() }
-            group.addTask { await driver.refresh() }
-            group.addTask { await driver.refresh() }
+            group.addTask { await driver.refresh(.anthropic) }
+            group.addTask { await driver.refresh(.anthropic) }
+            group.addTask { await driver.refresh(.anthropic) }
         }
 
         // `isFetching` is set (under lock) before the winning call ever
@@ -139,7 +152,7 @@ private func sampleSnapshot() throws -> UsageSnapshot {
         #expect(await gated.callCount == 1)
 
         // The guard must have been cleared: a fresh refresh fires again.
-        async let next: Void = driver.refresh()
+        async let next: Void = driver.refresh(.anthropic)
         await gated.waitUntilGated()
         #expect(await gated.callCount == 2)
         await gated.release(with: .success(try sampleSnapshot()))
@@ -152,10 +165,10 @@ private func sampleSnapshot() throws -> UsageSnapshot {
     /// reach the client.
     @Test func theInFlightGuardClearsEvenWhenTheFetchThrows() async {
         let client = FailingClient()
-        let driver = UsageDriver(tray: SpyTray(), client: client, loginItem: StubLoginItem())
+        let driver = UsageDriver(tray: SpyTray(), clients: [(.anthropic, client)], loginItem: StubLoginItem())
 
-        await driver.refresh()
-        await driver.refresh()
+        await driver.refresh(.anthropic)
+        await driver.refresh(.anthropic)
 
         #expect(await client.callCount == 2)
     }
@@ -184,14 +197,14 @@ private func sampleSnapshot() throws -> UsageSnapshot {
     /// again) is not separately exercised.
     @Test func onlyUserInitiatedRefreshResetsTheBackoff() async throws {
         let gated = GatedClient()
-        let driver = UsageDriver(tray: SpyTray(), client: gated, loginItem: StubLoginItem())
+        let driver = UsageDriver(tray: SpyTray(), clients: [(.anthropic, gated)], loginItem: StubLoginItem())
         let base = await driver.currentInterval
         #expect(base == UsageRefreshPolicy.baseInterval)
 
         // Three poll-loop-style failures: capture the interval after each one.
         var observed: [TimeInterval] = []
         for _ in 0..<3 {
-            async let r: Void = driver.refresh()
+            async let r: Void = driver.refresh(.anthropic)
             await gated.waitUntilGated()
             await gated.release(with: .failure(UsageError.transport))
             await r
@@ -208,6 +221,28 @@ private func sampleSnapshot() throws -> UsageSnapshot {
         #expect(await driver.currentInterval == base)
 
         // Drain the fetch `refreshNow()` triggered so nothing is left dangling.
+        await gated.waitUntilGated()
+        await gated.release(with: .failure(UsageError.transport))
+    }
+
+    /// `makeHandlers().menuWillOpen` calls `publish(force: true)`
+    /// synchronously, precisely so the tray rebuilds with current relative
+    /// reset captions when the menu is about to be drawn. Before this fix,
+    /// `force` never reached `tray.update` at all — the driver's own dedupe
+    /// let a forced publish through, but the value handed to the backend
+    /// carried no signal that would let it bypass its own "unchanged, skip
+    /// it" guard. This asserts `force` actually arrives at the backend.
+    @Test func menuWillOpenPublishesWithForceTrue() async {
+        let tray = SpyTray()
+        let gated = GatedClient()
+        let driver = UsageDriver(tray: tray, clients: [(.anthropic, gated)], loginItem: StubLoginItem())
+
+        driver.makeHandlers().menuWillOpen()
+
+        #expect(tray.forced.last == true)
+
+        // `menuWillOpen` also calls `refreshNow()`, which fires a detached
+        // fetch against `gated` — drain it so nothing is left dangling.
         await gated.waitUntilGated()
         await gated.release(with: .failure(UsageError.transport))
     }

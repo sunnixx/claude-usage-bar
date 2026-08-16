@@ -3,44 +3,42 @@ import Testing
 @testable import ClaudeUsageCore
 
 @Suite struct TrayContentTests {
-    private let utc = TimeZone(identifier: "UTC")!
-    private let locale = Locale(identifier: "en_US_POSIX")
-
-    private var calendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = utc
-        calendar.locale = locale
-        return calendar
-    }
-
-    private func snapshot() throws -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(
-                percent: 37,
-                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z"))
-            ),
-            week: UsageWindow(
-                percent: 26,
-                resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-08T07:00:00Z"))
-            ),
-            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: nil)],
+    private func snapshot() throws -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(
+                    label: "Session (5h)", percent: 37,
+                    resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-04T09:00:00Z")),
+                    role: .primary
+                ),
+                UsageWindow(
+                    label: "This week", percent: 26,
+                    resetsAt: try #require(ISO8601Flexible.date(from: "2026-08-08T07:00:00Z"))
+                ),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, role: .scoped),
+            ],
             fetchedAt: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z"))
         )
     }
 
     @Test func buildsContentFromStateAndLoginFlag() throws {
         let state = UsageState.loaded(try snapshot())
-        let content = TrayContent(
-            title: MenuModel.statusTitle(for: state),
-            rows: MenuModel.rows(
-                for: state, now: try #require(ISO8601Flexible.date(from: "2026-08-04T07:48:00Z")),
-                calendar: calendar, locale: locale, timeZone: utc
-            ),
-            loginItemEnabled: true
-        )
+        let content = TrayContent(states: [(.anthropic, state)], loginItemEnabled: true)
 
-        #expect(content.title.percent == 37)
+        #expect(content.states.count == 1)
+        #expect(content.states.first?.0 == .anthropic)
         #expect(content.loginItemEnabled)
-        #expect(!content.rows.isEmpty)
+    }
+
+    @Test func equalityIgnoresNothingButStatesAndLoginFlag() throws {
+        let state = UsageState.loaded(try snapshot())
+        let a = TrayContent(states: [(.anthropic, state)], loginItemEnabled: true)
+        let b = TrayContent(states: [(.anthropic, state)], loginItemEnabled: true)
+        let differentLogin = TrayContent(states: [(.anthropic, state)], loginItemEnabled: false)
+
+        #expect(a == b)
+        #expect(a != differentLogin)
     }
 }

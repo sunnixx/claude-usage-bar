@@ -82,6 +82,10 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
 
     /// Guarded by `lock`; written from any thread via `update`.
     private var pending: TrayContent?
+    /// Guarded by `lock` alongside `pending`. Sticky once set: if a forced
+    /// update is queued and a later, unforced update overwrites `pending`
+    /// before it is consumed, the force must not be lost — see `update`.
+    private var pendingForce = false
     /// UI thread only: every read and write — including in `showMenu`, which
     /// runs on this same thread via `dispatch` — happens there, so it needs
     /// no lock of its own.
@@ -185,9 +189,10 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         exit(0)
     }
 
-    public func update(_ content: TrayContent) {
+    public func update(_ content: TrayContent, force: Bool) {
         lock.lock()
         pending = content
+        pendingForce = pendingForce || force
         lock.unlock()
 
         // On the UI thread — notably when `update` is invoked synchronously
@@ -274,8 +279,12 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     private func applyShownOnly() {
         lock.lock()
         let next = pending
+        let forced = pendingForce
         lock.unlock()
-        guard let next, next != shown else { return }
+        // `pending`/`pendingForce` are NOT cleared here — see the doc
+        // comment above; `applyPending` (via the posted `kUpdateMessage`)
+        // still owns consuming them.
+        guard let next, RenderGate.shouldRender(next, shownAs: shown, force: forced) else { return }
         shown = next
         needsRender = true
     }
@@ -283,10 +292,12 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     private func applyPending() {
         lock.lock()
         let next = pending
+        let forced = pendingForce
         pending = nil
+        pendingForce = false
         lock.unlock()
 
-        if let next, next != shown {
+        if let next, RenderGate.shouldRender(next, shownAs: shown, force: forced) {
             shown = next
             needsRender = true
         }
@@ -300,15 +311,25 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
     private func render(_ content: TrayContent?) {
         guard let content else { return }
 
+        // The 32x32 icon has room for exactly one number, so it shows only
+        // the first provider with an actual value — `statusSegments` (the
+        // same list `AppKitTray`'s marks come from) already drops any
+        // provider that isn't signed in, so a Codex-only user gets Codex's
+        // reading here rather than a permanently empty placeholder for
+        // Anthropic. `szTip` has no such size constraint, so the tooltip
+        // composes every configured provider's reading; both are fully
+        // visible in the dropdown's per-provider sections too.
+        let segments = MenuModel.statusSegments(for: content.states)
+        let primary = segments.first
         let fresh = Win32Icon.make(
-            percent: content.title.percent,
-            critical: content.title.isCritical,
-            stale: content.title.isStale
+            percent: primary?.percent,
+            critical: primary?.isCritical ?? false,
+            stale: primary?.isStale ?? false
         )
         var data = notifyData()
         data.uFlags = UINT(NIF_ICON) | UINT(NIF_TIP)
         data.hIcon = fresh
-        fill(tip: content.title.text, into: &data)
+        fill(tip: MenuModel.composedLabel(for: segments), into: &data)
         _ = Shell_NotifyIconW(DWORD(NIM_MODIFY), &data)
 
         // Replace only after the shell has taken the new one, then free the old
@@ -329,18 +350,36 @@ public final class Win32Tray: TrayBackend, @unchecked Sendable {
         data.uFlags = UINT(NIF_ICON) | UINT(NIF_MESSAGE) | UINT(NIF_TIP)
         data.uCallbackMessage = kTrayMessage
         data.hIcon = icon
-        if let shown { fill(tip: shown.title.text, into: &data) }
+        if let shown {
+            fill(tip: MenuModel.composedLabel(for: MenuModel.statusSegments(for: shown.states)), into: &data)
+        }
         _ = Shell_NotifyIconW(DWORD(NIM_ADD), &data)
     }
+
+    // The tooltip is composed via `MenuModel.composedLabel`, shared with the
+    // Linux menu-bar label in `AppIndicatorTray` — see its doc comment.
+    // `composedLabel` names every provider with an actual value (a
+    // signed-out provider is simply absent, per `statusSegments`), e.g.
+    // "Claude 37% · Codex 8%", or just "Codex 8%" if only Codex is signed
+    // in. Well under `szTip`'s 128-UTF-16-unit limit for any realistic
+    // provider count.
 
     private func showMenu() {
         let content = shown
         guard let content, let window, let menu = CreatePopupMenu() else { return }
         defer { _ = DestroyMenu(menu) }
 
-        for row in content.rows {
+        let rows = MenuModel.rows(
+            for: content.states, now: Date(),
+            calendar: .current, locale: .current, timeZone: .current
+        )
+        for row in rows {
             // Win32 menus use the system proportional font, so the padded
             // monospace line would render ragged. Compose from the fields.
+            // A section header has no percent, bar or reset, so
+            // `Win32MenuLine.compose` already passes it through unchanged as
+            // its bare (already uppercased, by `MenuModel`) label — see
+            // `Win32MenuLineTests`.
             _ = AppendMenuW(menu, UINT(MF_STRING) | UINT(MF_GRAYED), 0, Self.line(row).wide)
         }
         _ = AppendMenuW(menu, UINT(MF_SEPARATOR), 0, nil)

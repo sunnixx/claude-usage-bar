@@ -34,3 +34,24 @@ public enum CredentialsJSON {
         return token
     }
 }
+
+/// Codex needs an account id alongside the bearer token, which `TokenLookup`
+/// cannot express — hence a sibling type rather than a change to the Claude one.
+public struct CodexCredentials: Equatable, Sendable {
+    public let accessToken: String
+    public let accountId: String?
+
+    public init(accessToken: String, accountId: String?) {
+        self.accessToken = accessToken
+        self.accountId = accountId
+    }
+}
+
+public enum CodexTokenLookup: Equatable, Sendable {
+    case credentials(CodexCredentials)
+    case missing
+}
+
+public protocol CodexTokenProviding: Sendable {
+    func credentials() throws -> CodexTokenLookup
+}

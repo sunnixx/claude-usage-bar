@@ -17,17 +17,21 @@ import Testing
         try #require(ISO8601Flexible.date(from: iso))
     }
 
-    private func loadedSnapshot() throws -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(percent: 37, resetsAt: try date("2026-08-04T09:00:00Z")),
-            week: UsageWindow(percent: 26, resetsAt: try date("2026-08-08T07:00:00Z")),
-            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: nil)],
+    private func loadedSnapshot() throws -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: 37, resetsAt: try date("2026-08-04T09:00:00Z"), role: .primary),
+                UsageWindow(label: "This week", percent: 26, resetsAt: try date("2026-08-08T07:00:00Z")),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: nil, role: .scoped),
+            ],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
     }
 
-    private func rows(_ state: UsageState, now: Date) -> [String] {
-        MenuModel.rows(for: state, now: now, calendar: calendar, locale: locale, timeZone: utc)
+    private func rows(_ state: UsageState, now: Date, provider: Provider = .anthropic) -> [String] {
+        MenuModel.rows(for: state, provider: provider, now: now, calendar: calendar, locale: locale, timeZone: utc)
             .map(MenuModel.monospaceLine)
     }
 
@@ -41,10 +45,10 @@ import Testing
     }
 
     @Test func marksHighUsageAsCritical() throws {
-        let snapshot = UsageSnapshot(
-            session: UsageWindow(percent: 93, resetsAt: nil),
-            week: nil,
-            scopedWeekly: [],
+        let snapshot = ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [UsageWindow(label: "Session (5h)", percent: 93, resetsAt: nil, role: .primary)],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
 
@@ -61,7 +65,7 @@ import Testing
 
     @Test func keepsShowingTheLastValueWhenStale() throws {
         let snapshot = try loadedSnapshot()
-        let title = MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt))
+        let title = MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt, reason: .offline))
 
         #expect(title.text == "37%")
     }
@@ -77,7 +81,7 @@ import Testing
 
     @Test func isStaleIsTrueWhenStale() throws {
         let snapshot = try loadedSnapshot()
-        #expect(MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt)).isStale == true)
+        #expect(MenuModel.statusTitle(for: .stale(snapshot, since: snapshot.fetchedAt, reason: .offline)).isStale == true)
     }
 
     // MARK: rows
@@ -96,7 +100,7 @@ import Testing
     @Test func indentsScopeRowsOnly() throws {
         let now = try date("2026-08-04T07:48:00Z")
         let menuRows = MenuModel.rows(
-            for: .loaded(try loadedSnapshot()),
+            for: .loaded(try loadedSnapshot()), provider: .anthropic,
             now: now, calendar: calendar, locale: locale, timeZone: utc
         )
 
@@ -105,10 +109,13 @@ import Testing
 
     @Test func omitsScopeRowsWhenThePlanHasNone() throws {
         let now = try date("2026-08-04T07:48:00Z")
-        let snapshot = UsageSnapshot(
-            session: UsageWindow(percent: 4, resetsAt: nil),
-            week: UsageWindow(percent: 0, resetsAt: nil),
-            scopedWeekly: [],
+        let snapshot = ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: 4, resetsAt: nil, role: .primary),
+                UsageWindow(label: "This week", percent: 0, resetsAt: nil),
+            ],
             fetchedAt: now
         )
 
@@ -122,7 +129,7 @@ import Testing
         let snapshot = try loadedSnapshot()
         let now = try date("2026-08-04T08:10:00Z")
 
-        let text = rows(.stale(snapshot, since: snapshot.fetchedAt), now: now)
+        let text = rows(.stale(snapshot, since: snapshot.fetchedAt, reason: .offline), now: now)
 
         #expect(text.last == "Offline — updated 07:48")
     }
@@ -141,11 +148,24 @@ import Testing
         #endif
     }
 
+    /// A Codex transport failure must never be labelled "Can't reach
+    /// Anthropic" — for a user signed into Codex but not Claude Code, that
+    /// wording names a company they aren't even signed into. Regression
+    /// coverage for the defect this project has hit repeatedly: the right
+    /// message rendered under the wrong provider's name.
+    @Test func namesTheRightServiceForACodexFailure() throws {
+        let now = try date("2026-08-04T07:48:00Z")
+
+        #expect(rows(.unreachable, now: now, provider: .codex) == ["Can't reach OpenAI"])
+        #expect(rows(.noToken, now: now, provider: .codex) == ["Not signed in to Codex"])
+        #expect(rows(.unauthorized, now: now, provider: .codex) == ["Token expired — open Codex to refresh"])
+    }
+
     // MARK: structured rows
 
     @Test func buildsStructuredRowsForASnapshot() throws {
         let rows = MenuModel.rows(
-            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            for: .loaded(try loadedSnapshot()), provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
 
@@ -158,7 +178,7 @@ import Testing
 
     @Test func marksScopedRowsAsIndented() throws {
         let rows = MenuModel.rows(
-            for: .loaded(try loadedSnapshot()), now: try date("2026-08-04T07:48:00Z"),
+            for: .loaded(try loadedSnapshot()), provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
         let scoped = try #require(rows.first { $0.isIndented })
@@ -168,7 +188,7 @@ import Testing
 
     @Test func messageRowsCarryOnlyALabel() throws {
         let rows = MenuModel.rows(
-            for: .noToken, now: try date("2026-08-04T07:48:00Z"),
+            for: .noToken, provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
         let row = try #require(rows.first)
@@ -208,25 +228,33 @@ import Testing
     }
 }
 
-// MARK: - Severity and scope-reset de-duplication
+// MARK: - Severity
+//
+// The scope-reset de-duplication tests that used to live here moved to
+// UsageSnapshotTests: the behaviour itself moved into the Anthropic decoder,
+// since it's a property of the decoded data, not of MenuModel's presentation.
 
 extension MenuModelTests {
     private func snapshot(
         sessionPercent: Int,
         weekPercent: Int,
         scopeResetsAt: Date?
-    ) throws -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(percent: sessionPercent, resetsAt: try date("2026-08-04T09:00:00Z")),
-            week: UsageWindow(percent: weekPercent, resetsAt: try date("2026-08-08T07:00:00Z")),
-            scopedWeekly: [ScopedWindow(label: "Fable", percent: 10, resetsAt: scopeResetsAt)],
+    ) throws -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: sessionPercent, resetsAt: try date("2026-08-04T09:00:00Z"), role: .primary),
+                UsageWindow(label: "This week", percent: weekPercent, resetsAt: try date("2026-08-08T07:00:00Z")),
+                UsageWindow(label: "Fable", percent: 10, resetsAt: scopeResetsAt, role: .scoped),
+            ],
             fetchedAt: try date("2026-08-04T07:48:00Z")
         )
     }
 
-    private func builtRows(_ snapshot: UsageSnapshot) throws -> [MenuRow] {
+    private func builtRows(_ snapshot: ProviderSnapshot) throws -> [MenuRow] {
         MenuModel.rows(
-            for: .loaded(snapshot), now: try date("2026-08-04T07:48:00Z"),
+            for: .loaded(snapshot), provider: .anthropic, now: try date("2026-08-04T07:48:00Z"),
             calendar: calendar, locale: locale, timeZone: utc
         )
     }
@@ -238,41 +266,126 @@ extension MenuModelTests {
         #expect(rows[1].severity == .warning)    // week 80
         #expect(rows[2].severity == .normal)     // Fable 10
     }
+}
 
-    @Test func omitsAScopeResetThatRepeatsTheWeeklyOne() throws {
-        // Fable resets at the same instant as the weekly window, so repeating
-        // the date on both rows is noise.
-        let shared = try date("2026-08-08T07:00:00Z")
-        let rows = try builtRows(try snapshot(sessionPercent: 37, weekPercent: 26, scopeResetsAt: shared))
+// MARK: - Multi-provider segments and sectioned rows
 
-        let scope = try #require(rows.first { $0.isIndented })
-        #expect(scope.reset == nil)
-        #expect(rows[1].reset != nil, "the weekly row must still show it")
-    }
-
-    @Test func keepsAScopeResetThatDiffersFromTheWeeklyOne() throws {
-        let rows = try builtRows(
-            try snapshot(
-                sessionPercent: 37, weekPercent: 26,
-                scopeResetsAt: try date("2026-08-09T07:00:00Z")
-            )
-        )
-
-        let scope = try #require(rows.first { $0.isIndented })
-        #expect(scope.reset != nil)
-    }
-
-    @Test func keepsAScopeResetWhenThereIsNoWeeklyWindow() throws {
-        let noWeek = UsageSnapshot(
-            session: UsageWindow(percent: 37, resetsAt: try date("2026-08-04T09:00:00Z")),
-            week: nil,
-            scopedWeekly: [
-                ScopedWindow(label: "Fable", percent: 10, resetsAt: try date("2026-08-08T07:00:00Z"))
-            ],
+extension MenuModelTests {
+    private func loaded(_ provider: Provider, _ percent: Int, plan: String? = nil) throws -> UsageState {
+        .loaded(ProviderSnapshot(
+            provider: provider,
+            planName: plan,
+            windows: [UsageWindow(label: "Session (5h)", percent: percent, resetsAt: nil, role: .primary)],
             fetchedAt: try date("2026-08-04T07:48:00Z")
+        ))
+    }
+
+    @Test func buildsOneSegmentPerAvailableProvider() throws {
+        let segments = MenuModel.statusSegments(for: [
+            (.anthropic, try loaded(.anthropic, 37)),
+            (.codex, try loaded(.codex, 4)),
+        ])
+
+        #expect(segments.count == 2)
+        #expect(segments[0].provider == .anthropic)
+        #expect(segments[0].text == "37%")
+        #expect(segments[1].provider == .codex)
+        #expect(segments[1].text == "4%")
+    }
+
+    @Test func omitsAProviderThatIsNotSignedIn() throws {
+        let segments = MenuModel.statusSegments(for: [
+            (.anthropic, try loaded(.anthropic, 37)),
+            (.codex, .noToken),
+        ])
+
+        #expect(segments.count == 1)
+        #expect(segments[0].provider == .anthropic)
+    }
+
+    @Test func fallsBackToADashWhenNoProviderHasAValue() {
+        let segments = MenuModel.statusSegments(for: [(.anthropic, .noToken), (.codex, .noToken)])
+
+        #expect(segments.count == 1)
+        #expect(segments[0].text == "—")
+        #expect(segments[0].percent == nil)
+        // Markless and providerless: neither provider's mark should be drawn
+        // for the placeholder, since neither is specifically the one that's
+        // unavailable. See `AppKitTray.renderTitle`.
+        #expect(segments[0].provider == nil)
+    }
+
+    @Test func marksACriticalSegmentIndependently() throws {
+        let segments = MenuModel.statusSegments(for: [
+            (.anthropic, try loaded(.anthropic, 95)),
+            (.codex, try loaded(.codex, 4)),
+        ])
+
+        #expect(segments[0].isCritical)
+        #expect(!segments[1].isCritical)
+    }
+
+    @Test func headsEachProviderSectionWithItsName() throws {
+        let rows = MenuModel.rows(
+            for: [(.anthropic, try loaded(.anthropic, 37)), (.codex, try loaded(.codex, 4, plan: "free"))],
+            now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
         )
 
-        let scope = try #require(try builtRows(noWeek).first { $0.isIndented })
-        #expect(scope.reset != nil)
+        let headers = rows.filter(\.isSectionHeader)
+        #expect(headers.count == 2)
+        #expect(headers[0].label == "CLAUDE")
+        #expect(headers[1].label == "CODEX · free")
+    }
+
+    @Test func doesNotHeadASingleProviderSection() throws {
+        // With only one provider configured the heading is noise.
+        let rows = MenuModel.rows(
+            for: [(.anthropic, try loaded(.anthropic, 37))],
+            now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        #expect(rows.filter(\.isSectionHeader).isEmpty)
+    }
+
+    @Test func showsEachProvidersErrorUnderItsOwnHeading() throws {
+        let rows = MenuModel.rows(
+            for: [(.anthropic, try loaded(.anthropic, 37)), (.codex, .noToken)],
+            now: try date("2026-08-04T07:48:00Z"),
+            calendar: calendar, locale: locale, timeZone: utc
+        )
+        let labels = rows.map(\.label)
+        #expect(labels.contains { $0.contains("Not signed in") })
+    }
+}
+
+// MARK: - composedLabel
+//
+// Shared by the Linux menu-bar label (`AppIndicatorTray`) and the Windows
+// tray tooltip (`Win32Tray`), so both name providers identically. Lifted here
+// so it is unit-testable on every platform rather than only by hand on
+// Linux/Windows.
+
+extension MenuModelTests {
+    @Test func composedLabelNamesTheOnlySignedInProvider() {
+        let segments = [
+            StatusSegment(provider: .codex, text: "8%", percent: 8, isCritical: false, isStale: false),
+        ]
+        #expect(MenuModel.composedLabel(for: segments) == "Codex 8%")
+    }
+
+    @Test func composedLabelNamesBothProviders() {
+        let segments = [
+            StatusSegment(provider: .anthropic, text: "37%", percent: 37, isCritical: false, isStale: false),
+            StatusSegment(provider: .codex, text: "8%", percent: 8, isCritical: false, isStale: false),
+        ]
+        #expect(MenuModel.composedLabel(for: segments) == "Claude 37% · Codex 8%")
+    }
+
+    @Test func composedLabelOmitsAProviderNameForThePlaceholderSegment() {
+        let segments = [
+            StatusSegment(provider: nil, text: "—", percent: nil, isCritical: false, isStale: false),
+        ]
+        #expect(MenuModel.composedLabel(for: segments) == "—")
     }
 }

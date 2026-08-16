@@ -29,6 +29,10 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
 
     private let lock = NSLock()
     private var pending: TrayContent?
+    /// Guarded by `lock` alongside `pending`. Sticky once set: if a forced
+    /// update is queued and a later, unforced update overwrites `pending`
+    /// before it drains, the force must not be lost — see `update`.
+    private var pendingForce = false
     private var shown: TrayContent?
 
     /// GTK thread only. True between the menu's "show" and "hide"/"deactivate"
@@ -109,7 +113,12 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         indicator = newIndicator
 
         app_indicator_set_status(indicator, APP_INDICATOR_STATUS_ACTIVE)
-        app_indicator_set_title(indicator, "Claude usage")
+        // Provider-neutral: this is set once, before any provider's state is
+        // known, and previously read "Claude usage" unconditionally — wrong
+        // for a user signed into Codex but not Claude Code. The label
+        // (below, in `render`) names each configured provider explicitly;
+        // this title does not need to.
+        app_indicator_set_title(indicator, "Usage")
 
         applyPending()
         gtk_main()
@@ -124,9 +133,10 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
         exit(0)
     }
 
-    public func update(_ content: TrayContent) {
+    public func update(_ content: TrayContent, force: Bool) {
         lock.lock()
         pending = content
+        pendingForce = pendingForce || force
         lock.unlock()
 
         // Drain inline when already running on the GTK thread — notably when
@@ -163,10 +173,16 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     private func applyPending() {
         lock.lock()
         let next = pending
+        let forced = pendingForce
         pending = nil
+        pendingForce = false
         lock.unlock()
 
-        guard let next, next != shown else { return }
+        // See `RenderGate`: `forced` bypasses the equality check because a
+        // menu-open rebuild's relative reset captions, recomputed from
+        // `Date()` below, can have moved on even though `next` compares
+        // equal to `shown`.
+        guard let next, RenderGate.shouldRender(next, shownAs: shown, force: forced) else { return }
         shown = next
 
         // Watchdog: we do not trust `isMenuOpen` indefinitely, because we
@@ -185,9 +201,37 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
     }
 
     private func render(_ content: TrayContent) {
-        // The label is the only place the percentage can appear; the icon is a
-        // fixed themed glyph.
-        app_indicator_set_label(indicator, content.title.text, "100%")
+        // The label is the only place a percentage can appear; the icon is a
+        // fixed themed glyph. Unlike a fixed icon, the label is plain text
+        // with room for every configured provider, so it composes all of
+        // them via the same `statusSegments` macOS uses for its marks — as
+        // text naming each provider ("Claude 37% · Codex 8%") rather than
+        // mark-plus-text. Naming the provider matters here more than it does
+        // on macOS: with only one provider signed in, a bare "8%" is
+        // indistinguishable from the other provider's reading, and a user
+        // signed out of Claude but into Codex could easily misread it as
+        // Claude's. `composedLabel` is the same composition `Win32Tray` uses
+        // for its tooltip, so both platforms name providers identically.
+        // Using `statusSegments` also means a provider with no value (not
+        // signed in) is dropped rather than shown as a permanent
+        // placeholder — e.g. a Codex-only user sees Codex's reading here,
+        // not an empty Claude dash forever.
+        let segments = MenuModel.statusSegments(for: content.states)
+        let label = MenuModel.composedLabel(for: segments)
+        // The second argument is a *width guide*, not a max-length truncator
+        // — too narrow and the host can clip the real label. Built from the
+        // same segments with each reading forced to "100%", through the same
+        // `composedLabel` composition, so the guide is always at least as
+        // wide as the real label — including the provider name's width, not
+        // just the percentage's.
+        let guideSegments = segments.map { segment in
+            StatusSegment(
+                provider: segment.provider, text: "100%",
+                percent: segment.percent, isCritical: segment.isCritical, isStale: segment.isStale
+            )
+        }
+        let guide = MenuModel.composedLabel(for: guideSegments)
+        app_indicator_set_label(indicator, label, guide)
 
         // Never swap the menu out from under the user while it is open. The
         // "show" handler connected below fires INSIDE the very signal
@@ -210,8 +254,27 @@ public final class AppIndicatorTray: TrayBackend, @unchecked Sendable {
 
         let menu = gtk_menu_new()
 
-        for row in content.rows {
+        let rows = MenuModel.rows(
+            for: content.states, now: Date(),
+            calendar: .current, locale: .current, timeZone: .current
+        )
+        for (index, row) in rows.enumerated() {
+            // A per-provider section heading gets a separator above it, so
+            // the sections read as visually distinct groups — except the
+            // very first row, where a leading separator would just be a gap
+            // at the top of the menu. A real `GtkMenuItem` with an empty
+            // label (this backend's first attempt) is not the same thing as
+            // a separator over DBusMenu, which has first-class separator
+            // support — a host may render an empty-label item as a
+            // full-height blank row or collapse it unpredictably.
+            // `appendSeparator` below already uses the real thing; reuse it.
+            if row.isSectionHeader && index != 0 {
+                appendSeparator(to: menu)
+            }
+
             // Pango <tt> keeps the columns aligned in a proportional menu font.
+            // `MenuModel.monospaceLine` already renders a section header (no
+            // percent, bar or reset) as its bare label through this same path.
             let markup = "<tt>\(escapeMarkup(MenuModel.monospaceLine(row)))</tt>"
             let item = gtk_menu_item_new()
             let label = gtk_label_new(nil)

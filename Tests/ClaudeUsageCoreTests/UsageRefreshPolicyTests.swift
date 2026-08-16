@@ -3,11 +3,14 @@ import Testing
 @testable import ClaudeUsageCore
 
 @Suite struct UsageRefreshPolicyTests {
-    private func snapshot(percent: Int, at seconds: TimeInterval) -> UsageSnapshot {
-        UsageSnapshot(
-            session: UsageWindow(percent: percent, resetsAt: nil),
-            week: UsageWindow(percent: 10, resetsAt: nil),
-            scopedWeekly: [],
+    private func snapshot(percent: Int, at seconds: TimeInterval) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .anthropic,
+            planName: nil,
+            windows: [
+                UsageWindow(label: "Session (5h)", percent: percent, resetsAt: nil, role: .primary),
+                UsageWindow(label: "This week", percent: 10, resetsAt: nil),
+            ],
             fetchedAt: Date(timeIntervalSince1970: seconds)
         )
     }
@@ -62,7 +65,7 @@ import Testing
 
         policy.record(failure: .transport)
 
-        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100), reason: .offline))
     }
 
     @Test func reportsUnreachableWhenNothingHasEverSucceeded() {
@@ -108,7 +111,7 @@ import Testing
 
         policy.record(failure: .unauthorized)
 
-        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100), reason: .credentials))
     }
 
     @Test func keepsTheValueThroughASingleNoToken() {
@@ -118,7 +121,7 @@ import Testing
 
         policy.record(failure: .noToken)
 
-        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100), reason: .credentials))
     }
 
     @Test func doesNotBackOffOnAnUnconfirmedAuthFailure() {
@@ -175,7 +178,20 @@ import Testing
 
         policy.record(failure: .badStatus(503))
 
-        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100), reason: .serverError))
+    }
+
+    @Test func namesTheCauseOfStalenessRatherThanAlwaysSayingOffline() {
+        var policy = UsageRefreshPolicy()
+        policy.record(success: snapshot(percent: 37, at: 100))
+        policy.record(failure: .badStatus(429))
+
+        guard case .stale(_, _, let reason) = policy.state else {
+            Issue.record("expected stale, got \(policy.state)")
+            return
+        }
+        // The app reached the server fine — calling this "Offline" is a lie.
+        #expect(reason == .rateLimited)
     }
 
     @Test func recoversFromAStaleState() {
@@ -221,7 +237,7 @@ import Testing
 
         policy.record(failure: .tokenStoreUnavailable)
 
-        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100)))
+        #expect(policy.state == .stale(fetched, since: Date(timeIntervalSince1970: 100), reason: .credentials))
     }
 
     @Test func reportsTokenStoreUnavailableWhenNothingHasEverSucceeded() {
