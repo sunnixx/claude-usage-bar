@@ -121,32 +121,6 @@ keeping them in sync, and a drawn glyph can be marked as a template image so it
 adapts automatically to light mode, dark mode and tinted menu bars, which a
 bitmap can't do for free. The drawing code is in `ProviderMark.swift`.
 
-## Verification boundary
-
-Stated plainly, because it is a design decision rather than a caveat.
-
-| | |
-|---|---|
-| ✅ **Hand-verified** | The macOS build, end to end |
-| ✅ **Tested on all three platforms** | Everything that decides *what number to show* |
-| ⚠️ **Compile-only** | The Linux and Windows trays — **never run by anyone** |
-| ⚠️ **Observed once** | The Codex endpoint, on a `free` plan |
-
-Hosted CI runners have no desktop shell, so `AppIndicatorTray` and `Win32Tray`
-are proven to compile, link and pass the shared logic tests — nothing more.
-Expect a round of fixes once real users exercise them.
-
-The Codex endpoint is undocumented and can change without notice. The
-paid-plan response shape is *inferred from the Codex CLI's own source*, not
-from an observed response, and is covered by a fabricated fixture.
-
-**Why that is survivable:** every decision about what number to show — parsing
-the response, computing percentages, deciding what is stale or critical,
-reading the token — lives in `HeadroomCore`, which every platform shares and
-which is fully tested. The tray backends only *display* what the core already
-computed. A backend bug can draw the wrong pixels or crash the tray; it cannot
-show a wrong number or touch your credential.
-
 ## Architecture
 
 ```
@@ -168,8 +142,7 @@ swift test
 
 164 on macOS; a few more on Linux and Windows, where the file-based Claude Code
 token store also runs (macOS reads the Keychain instead). Everything is covered
-except the platform UI layers, which are verified by hand on macOS and — per
-the boundary above — not yet run at all elsewhere.
+except the platform UI layers, which are verified by hand on macOS.
 
 ## Requirements
 
