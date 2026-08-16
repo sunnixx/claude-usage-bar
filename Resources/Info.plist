@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>ClaudeUsageBar</string>
+    <string>Headroom</string>
     <key>CFBundleDisplayName</key>
     <string>Claude Usage</string>
     <key>CFBundleIdentifier</key>
-    <string>com.klayytech.claude-usage-bar</string>
+    <string>com.klayytech.headroom</string>
     <key>CFBundleExecutable</key>
-    <string>ClaudeUsageBar</string>
+    <string>Headroom</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

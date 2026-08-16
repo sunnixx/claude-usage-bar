@@ -6,10 +6,10 @@ cd "$(dirname "$0")/.."
 
 swift build -c release
 
-STAGE="dist/claude-usage-bar-linux"
+STAGE="dist/headroom-linux"
 rm -rf "$STAGE" && mkdir -p "$STAGE"
-cp "$(swift build -c release --show-bin-path)/ClaudeUsageBar" "$STAGE/claude-usage-bar"
-cp Resources/claude-usage-bar.desktop "$STAGE/"
+cp "$(swift build -c release --show-bin-path)/Headroom" "$STAGE/headroom"
+cp Resources/headroom.desktop "$STAGE/"
 
-tar -czf dist/claude-usage-bar-linux.tar.gz -C dist claude-usage-bar-linux
-echo "Built dist/claude-usage-bar-linux.tar.gz"
+tar -czf dist/headroom-linux.tar.gz -C dist headroom-linux
+echo "Built dist/headroom-linux.tar.gz"

@@ -1,13 +1,16 @@
-# ClaudeUsageBar
+# Headroom
 
-[![CI](https://github.com/sunnixx/claude-usage-bar/actions/workflows/ci.yml/badge.svg)](https://github.com/sunnixx/claude-usage-bar/actions/workflows/ci.yml)
+[![CI](https://github.com/sunnixx/headroom/actions/workflows/ci.yml/badge.svg)](https://github.com/sunnixx/headroom/actions/workflows/ci.yml)
 
 A macOS, Windows, and Linux menu bar / tray readout of your **Claude Code**
 and **ChatGPT Codex CLI** usage — each provider's primary window at a glance,
 with the weekly window, per-model scopes, and per-provider sections in the
 dropdown.
 
-![ClaudeUsageBar in the macOS menu bar, showing 7% of the session window used and the dropdown with the weekly window and per-model scopes](docs/images/screenshot.png)
+It answers one question: how much headroom is left before a limit cuts off
+work mid-task?
+
+![Headroom in the macOS menu bar, showing 7% of the session window used and the dropdown with the weekly window and per-model scopes](docs/images/screenshot.png)
 
 The screenshot above is the macOS build, from before Codex support existed —
 the current menu bar shows a small drawn mark and a percentage per signed-in
@@ -41,9 +44,9 @@ owning CLI (`claude` or `codex`) to refresh it.
 ## Build
 
     ./Scripts/build-app.sh
-    open dist/ClaudeUsageBar.app
+    open dist/Headroom.app
 
-Move `dist/ClaudeUsageBar.app` to `/Applications` before enabling "Launch at
+Move `dist/Headroom.app` to `/Applications` before enabling "Launch at
 Login" — `SMAppService` is unreliable for bundles elsewhere.
 
 macOS will ask for Keychain access the first time, because the item was
@@ -100,7 +103,7 @@ and is covered by a fabricated fixture rather than a real one.
 This is a deliberate consequence of the architecture, not an oversight: all
 the logic that decides *what number to show* — parsing the usage response,
 computing percentages, deciding what's stale or critical, reading the token —
-lives in `ClaudeUsageCore`, which every platform shares and which is fully
+lives in `HeadroomCore`, which every platform shares and which is fully
 tested. The platform-specific tray backends only *display* what the core
 already computed. A backend bug can draw the wrong pixels, misplace a menu
 item, or crash the tray; it cannot show a wrong number or touch your
