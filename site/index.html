@@ -6,6 +6,7 @@
 <title>Headroom — Claude Code &amp; ChatGPT Codex usage in your menu bar</title>
 <meta name="description" content="A menu bar readout of your Claude Code and ChatGPT Codex subscription usage. See how much headroom is left before a limit cuts off work mid-task. Read-only, silent, open source.">
 <link rel="canonical" href="https://aiheadroom.com/">
+<meta name="author" content="Sumair Hamza">
 
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://aiheadroom.com/">
@@ -160,9 +161,13 @@
   .panelnote{color:var(--faint);font-size:13.6px;margin:14px 0 0}
 
   footer{border-top:1px solid var(--line);padding:34px 0 54px;color:var(--faint);font-size:14px}
-  footer a{color:var(--dim)}
-  .foot{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  footer a{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--line)}
+  footer a:hover{color:var(--ink);border-bottom-color:var(--faint)}
+  .foot{display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
   .foot .sp{flex:1}
+  .by{color:var(--dim);font-size:14.5px}
+  .by a{color:var(--ink);font-weight:560}
+  .foot-note{margin:14px 0 0;font-size:13.2px;color:var(--faint);max-width:640px}
 
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -318,11 +323,17 @@ swift build -c release</pre>
 </div>
 
 <footer>
-  <div class="wrap foot">
-    <span>Headroom — open source. No telemetry, no accounts, no network calls beyond the two usage endpoints.</span>
-    <span class="sp"></span>
-    <a href="https://github.com/sunnixx/headroom">GitHub</a>
-    <a href="https://github.com/sunnixx/headroom/issues">Report an issue</a>
+  <div class="wrap">
+    <div class="foot">
+      <span class="by">Built by <a href="https://sumairhamza.com" rel="me">Sumair Hamza</a> — more at <a href="https://sumairhamza.com">sumairhamza.com</a></span>
+      <span class="sp"></span>
+      <a href="https://github.com/sunnixx/headroom">GitHub</a>
+      <a href="https://github.com/sunnixx/headroom/issues">Report an issue</a>
+    </div>
+    <p class="foot-note">
+      Headroom is open source. No telemetry, no accounts, and no network calls
+      beyond the two usage endpoints it reads from.
+    </p>
   </div>
 </footer>
 
