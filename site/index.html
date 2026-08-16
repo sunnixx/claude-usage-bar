@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Headroom — Claude Code &amp; ChatGPT Codex usage in your menu bar</title>
+<meta name="description" content="A menu bar readout of your Claude Code and ChatGPT Codex subscription usage. See how much headroom is left before a limit cuts off work mid-task. Read-only, silent, open source.">
+<link rel="canonical" href="https://aiheadroom.com/">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://aiheadroom.com/">
+<meta property="og:title" content="Headroom — AI usage in your menu bar">
+<meta property="og:description" content="How much is left before a limit cuts off work mid-task? Claude Code and ChatGPT Codex usage, at a glance.">
+<meta property="og:image" content="https://aiheadroom.com/dropdown.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' x='3' font-size='26'>◔</text></svg>">
+
+<style>
+  :root{
+    --bg:#fbfbfd; --panel:#fff; --ink:#101014; --dim:#5c5c68; --faint:#8e8e9a;
+    --line:rgba(0,0,0,.09); --line-2:rgba(0,0,0,.06);
+    --accent:#1f9d55; --accent-ink:#0f6b39;
+    --amber:#d98218; --red:#d64550;
+    --shadow:0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(16,16,20,.10);
+    --radius:14px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0c0c0f; --panel:#151519; --ink:#f2f2f5; --dim:#a2a2ae; --faint:#71717e;
+      --line:rgba(255,255,255,.10); --line-2:rgba(255,255,255,.06);
+      --accent:#3ecf8e; --accent-ink:#7ee3b4;
+      --amber:#e8a33d; --red:#f0656f;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 18px 44px rgba(0,0,0,.45);
+    }
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+  a{color:inherit}
+  code{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:.92em}
+
+  /* ---------- nav ---------- */
+  nav{display:flex;align-items:center;gap:14px;padding:22px 0}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:650;letter-spacing:-.01em;text-decoration:none}
+  .logo svg{display:block}
+  nav .sp{flex:1}
+  nav a.gh{
+    display:inline-flex;align-items:center;gap:7px;text-decoration:none;color:var(--dim);
+    font-size:14.5px;font-weight:500;padding:7px 13px;border:1px solid var(--line);
+    border-radius:9px;background:var(--panel);transition:color .15s,border-color .15s;
+  }
+  nav a.gh:hover{color:var(--ink);border-color:var(--faint)}
+
+  /* ---------- hero ---------- */
+  header{padding:44px 0 20px;text-align:center}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:530;
+    color:var(--dim);border:1px solid var(--line);background:var(--panel);
+    padding:6px 13px;border-radius:100px;margin-bottom:22px;
+  }
+  .eyebrow b{color:var(--accent-ink);font-weight:640}
+  h1{
+    font-size:clamp(38px,6.4vw,60px);line-height:1.06;letter-spacing:-.03em;
+    font-weight:680;margin:0 0 18px;
+  }
+  h1 .g{
+    background:linear-gradient(100deg,var(--accent),var(--amber));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{font-size:clamp(17px,2.1vw,20px);color:var(--dim);max-width:620px;margin:0 auto 28px}
+  .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;text-decoration:none;font-weight:570;
+    font-size:15px;padding:12px 22px;border-radius:11px;border:1px solid transparent;
+    transition:transform .12s ease, box-shadow .15s ease, background .15s;
+  }
+  .btn.primary{background:var(--ink);color:var(--bg);box-shadow:var(--shadow)}
+  .btn.primary:hover{transform:translateY(-1px)}
+  .btn.ghost{background:var(--panel);border-color:var(--line);color:var(--ink)}
+  .btn.ghost:hover{border-color:var(--faint)}
+  .sub{font-size:13.5px;color:var(--faint)}
+
+  /* ---------- shot ---------- */
+  .shot{margin:44px auto 0;max-width:352px;position:relative}
+  .shot img{
+    display:block;width:100%;height:auto;border-radius:var(--radius);
+    box-shadow:var(--shadow);border:1px solid var(--line-2);
+  }
+  .glow{
+    position:absolute;inset:-14% -22% 22%;z-index:-1;border-radius:50%;
+    background:radial-gradient(closest-side,rgba(62,207,142,.20),transparent 72%);
+    filter:blur(34px);
+  }
+
+  /* ---------- sections ---------- */
+  section{padding:76px 0}
+  .kicker{font-size:13px;font-weight:640;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);margin:0 0 12px}
+  h2{font-size:clamp(26px,3.6vw,34px);line-height:1.15;letter-spacing:-.022em;font-weight:660;margin:0 0 14px}
+  .say{color:var(--dim);max-width:620px;margin:0 0 34px}
+
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media(max-width:860px){.grid{grid-template-columns:1fr 1fr}}
+  @media(max-width:560px){.grid{grid-template-columns:1fr}}
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px;transition:border-color .15s, transform .15s;
+  }
+  .card:hover{border-color:var(--faint);transform:translateY(-2px)}
+  .card h3{margin:0 0 7px;font-size:16.5px;font-weight:620;letter-spacing:-.01em}
+  .card p{margin:0;color:var(--dim);font-size:14.6px;line-height:1.55}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:8px;vertical-align:1px}
+
+  /* ---------- privacy ---------- */
+  .safe{
+    background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:clamp(26px,4vw,40px);display:grid;grid-template-columns:1.05fr .95fr;gap:34px;align-items:start;
+  }
+  @media(max-width:820px){.safe{grid-template-columns:1fr}}
+  .safe h2{margin-bottom:12px}
+  ul.checks{list-style:none;margin:0;padding:0}
+  ul.checks li{position:relative;padding-left:29px;margin-bottom:13px;color:var(--dim);font-size:15px}
+  ul.checks li:last-child{margin-bottom:0}
+  ul.checks li::before{
+    content:"";position:absolute;left:0;top:7px;width:16px;height:16px;border-radius:50%;
+    background:var(--accent);opacity:.16;
+  }
+  ul.checks li::after{
+    content:"";position:absolute;left:5px;top:11px;width:5px;height:8px;
+    border:solid var(--accent);border-width:0 2px 2px 0;transform:rotate(42deg);
+  }
+  ul.checks b{color:var(--ink);font-weight:600}
+  .paths{font-size:14px}
+  .paths div{
+    display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line-2);
+  }
+  .paths div:last-child{border-bottom:0}
+  .paths span:first-child{color:var(--ink);font-weight:560;white-space:nowrap}
+  .paths span:last-child{color:var(--faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;text-align:right}
+
+  /* ---------- install ---------- */
+  .tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+  .tab{
+    font:inherit;font-size:14px;font-weight:550;padding:8px 16px;border-radius:9px;cursor:pointer;
+    background:var(--panel);border:1px solid var(--line);color:var(--dim);transition:.15s;
+  }
+  .tab[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+  pre{
+    margin:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px 22px;overflow-x:auto;font-size:13.6px;line-height:1.75;
+    font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;color:var(--ink);
+  }
+  pre .c{color:var(--faint)}
+  .panelnote{color:var(--faint);font-size:13.6px;margin:14px 0 0}
+
+  footer{border-top:1px solid var(--line);padding:34px 0 54px;color:var(--faint);font-size:14px}
+  footer a{color:var(--dim)}
+  .foot{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .foot .sp{flex:1}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <a class="logo" href="/">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="12" r="9.2" stroke="currentColor" stroke-width="1.7" opacity=".28"/>
+        <path d="M12 12 L12 3.4 A8.6 8.6 0 0 1 19.6 16.4 Z" fill="currentColor"/>
+      </svg>
+      Headroom
+    </a>
+    <span class="sp"></span>
+    <a class="gh" href="https://github.com/sunnixx/headroom">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      GitHub
+    </a>
+  </nav>
+
+  <header>
+    <span class="eyebrow"><b>Claude Code</b> &amp; <b>ChatGPT Codex</b></span>
+    <h1>How much is left before<br>a limit <span class="g">cuts you off?</span></h1>
+    <p class="lede">
+      Headroom puts both providers' usage in your menu bar. One glance tells you
+      whether you can start something big — or whether you're ten minutes from a wall.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#install">Install</a>
+      <a class="btn ghost" href="https://github.com/sunnixx/headroom">View source</a>
+    </div>
+    <p class="sub">Free and open source · macOS, Linux, Windows</p>
+
+    <div class="shot">
+      <div class="glow"></div>
+      <img src="dropdown.png" alt="The Headroom dropdown: a card for Claude showing 9% of the five-hour session used with the weekly window and a per-model scope beneath, and a card for Codex on the free plan showing 0% of a 30-day window.">
+    </div>
+  </header>
+</div>
+
+<div class="wrap">
+  <section>
+    <p class="kicker">What it does</p>
+    <h2>A readout, not a dashboard</h2>
+    <p class="say">
+      One card per provider. The big number is the window that runs out
+      <em>soonest</em> — everything else sits beneath it.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <h3><span class="dot" style="background:var(--accent)"></span>Colour that means something</h3>
+        <p>Green below 75%, amber from 75%, red from 90%. The menu bar goes red at the same threshold, so you notice without opening anything.</p>
+      </div>
+      <div class="card">
+        <h3>Honest when it fails</h3>
+        <p>Rate limited, offline, or a bad response — it says which. It never blames the network for a problem the network didn't cause.</p>
+      </div>
+      <div class="card">
+        <h3>Never blanks a good number</h3>
+        <p>A hiccup keeps your last reading and dims it. You still see something true, marked as slightly old.</p>
+      </div>
+      <div class="card">
+        <h3>Survives token rotation</h3>
+        <p>The CLIs rotate their tokens periodically. One failed poll is treated as a rotation window, not a sign-out.</p>
+      </div>
+      <div class="card">
+        <h3>Independent providers</h3>
+        <p>Each has its own polling and backoff. Codex being rate limited can't disturb your Claude reading, or the other way round.</p>
+      </div>
+      <div class="card">
+        <h3>Silent</h3>
+        <p>No notifications, no history, no cost accounting. It sits there and tells you one thing, accurately.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="safe">
+      <div>
+        <p class="kicker">Your credentials</p>
+        <h2>Read. Never written.</h2>
+        <p class="say" style="margin-bottom:22px">
+          Headroom reads the tokens the CLIs already store on your machine. It
+          contains no code that writes, refreshes or deletes them — each CLI owns
+          and rotates its own.
+        </p>
+        <ul class="checks">
+          <li><b>No write path exists.</b> Not for either credential file, on any platform.</li>
+          <li><b>The token goes one place</b> — that provider's own endpoint, as a bearer credential. Never a log, an error, or disk.</li>
+          <li><b>Your identity isn't parsed.</b> The Codex response carries an email and account ID; none of it is decoded at all.</li>
+          <li><b>Auditable.</b> It's open source — the credential handling is a few dozen lines you can read in a sitting.</li>
+        </ul>
+      </div>
+      <div>
+        <div class="paths">
+          <div><span>Claude Code · macOS</span><span>login Keychain</span></div>
+          <div><span>Claude Code · Linux</span><span>~/.claude/.credentials.json</span></div>
+          <div><span>Claude Code · Windows</span><span>%USERPROFILE%\.claude\</span></div>
+          <div><span>ChatGPT Codex · all</span><span>~/.codex/auth.json</span></div>
+        </div>
+        <p class="panelnote">
+          A provider you aren't signed into is simply left out — not shown as an error.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <p class="kicker">Install</p>
+    <h2>Build it in a minute</h2>
+    <p class="say">Swift 6 and a terminal. No installer, no account, nothing to sign up for.</p>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true"  data-os="mac">macOS</button>
+      <button class="tab" role="tab" aria-selected="false" data-os="linux">Linux</button>
+      <button class="tab" role="tab" aria-selected="false" data-os="win">Windows</button>
+    </div>
+
+<pre data-os="mac"><span class="c"># clone and build</span>
+git clone https://github.com/sunnixx/headroom.git
+cd headroom
+./Scripts/build-app.sh
+open dist/Headroom.app</pre>
+
+<pre data-os="linux" hidden><span class="c"># tray dependencies, then build</span>
+sudo apt install libayatana-appindicator3-dev libgtk-3-dev
+git clone https://github.com/sunnixx/headroom.git
+cd headroom
+./Scripts/build-linux.sh</pre>
+
+<pre data-os="win" hidden><span class="c"># clone and build</span>
+git clone https://github.com/sunnixx/headroom.git
+cd headroom
+swift build -c release</pre>
+
+    <p class="panelnote" data-note="mac">
+      Move <code>Headroom.app</code> to <code>/Applications</code> before enabling Launch at Login.
+      macOS asks for Keychain access on first run — the item belongs to the Claude Code CLI.
+    </p>
+    <p class="panelnote" data-note="linux" hidden>
+      Works on KDE, XFCE, Cinnamon, MATE and Budgie. GNOME hides tray icons unless the
+      <a href="https://extensions.gnome.org/extension/615/appindicator-support/">AppIndicator extension</a>
+      is installed — that applies to every tray app, not just this one.
+    </p>
+    <p class="panelnote" data-note="win" hidden>
+      The notification area has no text beside an icon, so the percentage is drawn into the
+      icon itself. The tooltip names every signed-in provider.
+    </p>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap foot">
+    <span>Headroom — open source. No telemetry, no accounts, no network calls beyond the two usage endpoints.</span>
+    <span class="sp"></span>
+    <a href="https://github.com/sunnixx/headroom">GitHub</a>
+    <a href="https://github.com/sunnixx/headroom/issues">Report an issue</a>
+  </div>
+</footer>
+
+<script>
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(tab => tab.addEventListener('click', () => {
+    const os = tab.dataset.os;
+    tabs.forEach(t => t.setAttribute('aria-selected', String(t === tab)));
+    document.querySelectorAll('pre[data-os]').forEach(p => p.hidden = p.dataset.os !== os);
+    document.querySelectorAll('[data-note]').forEach(n => n.hidden = n.dataset.note !== os);
+  }));
+
+  // Default to the visitor's platform rather than always macOS.
+  const ua = navigator.userAgent;
+  const guess = /Windows/i.test(ua) ? 'win' : /Linux|X11/i.test(ua) && !/Android/i.test(ua) ? 'linux' : 'mac';
+  if (guess !== 'mac') document.querySelector(`.tab[data-os="${guess}"]`)?.click();
+</script>
+
+</body>
+</html>
