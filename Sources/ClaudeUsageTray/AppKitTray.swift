@@ -155,38 +155,18 @@ public final class AppKitTray: NSObject, TrayBackend, NSMenuDelegate, @unchecked
         guard let menu = statusItem?.menu else { return }
         menu.removeAllItems()
 
-        let rows = MenuModel.rows(
+        // One card per provider rather than one item per row: the spacing
+        // inside a card is ours, not NSMenu's, which is what stops the layout
+        // looking cramped. Linux and Windows keep the flat row rendering.
+        let sections = MenuModel.sections(
             for: content.states, now: Date(),
             calendar: .current, locale: .current, timeZone: .current
         )
-
-        // Usage rows are drawn (label, tinted meter, percentage, reset caption);
-        // message rows such as "Not signed in to Claude Code" or "Updated 13:44"
-        // stay ordinary text items. One shared label-column width keeps every
-        // meter starting at the same x.
-        let labelColumnWidth = UsageRowView.labelColumnWidth(for: rows)
-        for row in rows {
-            let item = NSMenuItem(title: row.label, action: nil, keyEquivalent: "")
+        let cardWidth = ProviderCardView.width(for: sections)
+        for section in sections {
+            let item = NSMenuItem(title: section.provider.displayName, action: nil, keyEquivalent: "")
             item.isEnabled = false
-            if row.isSectionHeader {
-                item.attributedTitle = NSAttributedString(
-                    string: row.label,
-                    attributes: [
-                        .font: NSFont.menuFont(ofSize: 10),
-                        .foregroundColor: NSColor.secondaryLabelColor,
-                    ]
-                )
-            } else if row.percent == nil {
-                item.attributedTitle = NSAttributedString(
-                    string: row.label,
-                    attributes: [
-                        .font: NSFont.menuFont(ofSize: 12),
-                        .foregroundColor: NSColor.secondaryLabelColor,
-                    ]
-                )
-            } else {
-                item.view = UsageRowView(row: row, labelColumnWidth: labelColumnWidth)
-            }
+            item.view = ProviderCardView(section: section, width: cardWidth)
             menu.addItem(item)
         }
 
